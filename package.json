@@ -1,0 +1,39 @@
+{
+  "name": "pi-ephemeral",
+  "version": "0.1.0",
+  "description": "Pi optional resource catalog and activation manager",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "pi-ephemeral": "./dist/cli.js"
+  },
+  "pi": {
+    "extensions": ["./dist/index.js"]
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*",
+    "@types/node": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
