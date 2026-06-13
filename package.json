@@ -1,24 +1,51 @@
 {
-  "name": "pi-ephemeral",
+  "name": "@tarmo-randma/pi-ephemeral",
   "version": "0.1.0",
-  "description": "Pi optional resource catalog and activation manager",
+  "description": "Make Pi resources optional and context-activated",
   "license": "MIT",
   "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "resource-manager",
+    "skills",
+    "prompts",
+    "themes"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tarmo-randma/pi-ephemeral.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tarmo-randma/pi-ephemeral/issues"
+  },
+  "homepage": "https://github.com/tarmo-randma/pi-ephemeral#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "pi-ephemeral": "./dist/cli.js"
   },
   "pi": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs",
+    "examples/minimal-skill-package"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "pack:check": "npm pack --dry-run",
+    "test:package": "vitest run tests/package/installed-package.test.ts"
   },
   "dependencies": {},
   "peerDependencies": {
