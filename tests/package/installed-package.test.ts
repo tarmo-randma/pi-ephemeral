@@ -18,6 +18,13 @@ async function invoke(args: string[]) {
   return { exitCode, stdout: stdout.join(""), stderr: stderr.join("") };
 }
 
+function expectCleanCatalogOutput(result: { stdout: string; stderr: string }, parsed: Record<string, unknown>) {
+  expect(result.stderr).toBe("");
+  expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/\b(?:ERROR )?missing_catalog\b/);
+  expect(parsed.errors ?? []).toEqual([]);
+  expect(parsed.problems ?? []).toEqual([]);
+}
+
 describe("installed package shape", () => {
   it("works from a packed dependency inside an example host package", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-ephemeral-installed-package-"));
@@ -45,6 +52,7 @@ describe("installed package shape", () => {
         "package/LICENSE",
         "package/docs/create-example-package.md",
         "package/examples/minimal-skill-package/package.json",
+        "package/examples/minimal-skill-package/resources.json",
         "package/examples/minimal-skill-package/ephemeral/resources.json",
       ]) {
         expect(tarList).toContain(expected);
@@ -66,20 +74,26 @@ describe("installed package shape", () => {
       const base = ["--package", hostDir, "--agent-dir", agentDir, "--cwd", projectDir];
       const list = await invoke(["list", "--json", ...base]);
       expect(list.exitCode).toBe(0);
-      expect(JSON.parse(list.stdout).resources).toEqual(expect.arrayContaining([
+      const listJson = JSON.parse(list.stdout);
+      expectCleanCatalogOutput(list, listJson);
+      expect(listJson.resources).toEqual(expect.arrayContaining([
         expect.objectContaining({ identity: "skill:ephemeral-example", active: { global: false, project: false } }),
       ]));
 
       const info = await invoke(["info", "skill", "ephemeral-example", "--json", ...base]);
       expect(info.exitCode).toBe(0);
-      expect(JSON.parse(info.stdout).resource).toMatchObject({ type: "skill", name: "ephemeral-example" });
+      const infoJson = JSON.parse(info.stdout);
+      expectCleanCatalogOutput(info, infoJson);
+      expect(infoJson.resource).toMatchObject({ type: "skill", name: "ephemeral-example" });
 
       const enable = await invoke(["enable", "skill", "ephemeral-example", "--global", ...base]);
       expect(enable.exitCode).toBe(0);
 
       const status = await invoke(["status", "--json", ...base]);
       expect(status.exitCode).toBe(0);
-      expect(JSON.parse(status.stdout).global).toEqual(expect.arrayContaining([
+      const statusJson = JSON.parse(status.stdout);
+      expectCleanCatalogOutput(status, statusJson);
+      expect(statusJson.global).toEqual(expect.arrayContaining([
         expect.objectContaining({ type: "skill", name: "ephemeral-example" }),
       ]));
 

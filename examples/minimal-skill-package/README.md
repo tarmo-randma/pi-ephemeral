@@ -2,7 +2,7 @@
 
 This example shows the smallest useful Pi package shape for `@tarmo-randma/pi-ephemeral`.
 
-Only `pi-ephemeral` is loaded by the package manifest. The example skill is listed in `ephemeral/resources.json`, so it stays optional until enabled with `/pi-ephemeral`.
+Only `pi-ephemeral` is loaded by the package manifest. The root `resources.json` is an empty always-on catalog. The example skill is listed in `ephemeral/resources.json`, so it stays optional until enabled with `/pi-ephemeral`.
 
 The package contains one optional skill:
 

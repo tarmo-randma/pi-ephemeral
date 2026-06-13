@@ -12,6 +12,14 @@ fi
 mkdir -p "$ARTIFACT_ROOT"
 echo "Artifacts: $ARTIFACT_ROOT"
 
+assert_no_missing_catalog() {
+  local path="$1"
+  if grep -Eq '(^|[^[:alnum:]_])(ERROR )?missing_catalog([^[:alnum:]_]|$)' "$path"; then
+    echo "Unexpected missing_catalog in $path" >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT"
 npm test | tee "$ARTIFACT_ROOT/npm-test.log"
 npm run typecheck | tee "$ARTIFACT_ROOT/typecheck.log"
@@ -37,9 +45,12 @@ fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 NODE
 npm install --prefix "$HOST_DIR" | tee "$ARTIFACT_ROOT/host-npm-install.log"
 node "$HOST_DIR/node_modules/@tarmo-randma/pi-ephemeral/dist/cli.js" list --package "$HOST_DIR" --agent-dir "$AGENT_DIR" --cwd "$PROJECT_DIR" | tee "$ARTIFACT_ROOT/list.txt"
+assert_no_missing_catalog "$ARTIFACT_ROOT/list.txt"
 node "$HOST_DIR/node_modules/@tarmo-randma/pi-ephemeral/dist/cli.js" info skill ephemeral-example --package "$HOST_DIR" --agent-dir "$AGENT_DIR" --cwd "$PROJECT_DIR" | tee "$ARTIFACT_ROOT/info.txt"
+assert_no_missing_catalog "$ARTIFACT_ROOT/info.txt"
 node "$HOST_DIR/node_modules/@tarmo-randma/pi-ephemeral/dist/cli.js" enable skill ephemeral-example --global --package "$HOST_DIR" --agent-dir "$AGENT_DIR" --cwd "$PROJECT_DIR" | tee "$ARTIFACT_ROOT/enable.txt"
 node "$HOST_DIR/node_modules/@tarmo-randma/pi-ephemeral/dist/cli.js" status --package "$HOST_DIR" --agent-dir "$AGENT_DIR" --cwd "$PROJECT_DIR" | tee "$ARTIFACT_ROOT/status.txt"
+assert_no_missing_catalog "$ARTIFACT_ROOT/status.txt"
 node "$HOST_DIR/node_modules/@tarmo-randma/pi-ephemeral/dist/cli.js" disable skill ephemeral-example --global --package "$HOST_DIR" --agent-dir "$AGENT_DIR" --cwd "$PROJECT_DIR" | tee "$ARTIFACT_ROOT/disable.txt"
 
 if [[ "$RUN_PI_SMOKE" == "1" ]]; then

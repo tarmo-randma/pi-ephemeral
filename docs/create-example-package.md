@@ -20,6 +20,7 @@ Create this structure:
 ~/.pi/packages/pi-ephemeral-example-resources/
 ├── package.json
 ├── README.md
+├── resources.json
 └── ephemeral/
     ├── resources.json
     └── skills/
@@ -36,7 +37,8 @@ After creating the files, run `npm install` in the package directory so the `@ta
 After creating the package, explain:
 
 - the package path
-- that only `pi-ephemeral` is always loaded
+- that only `pi-ephemeral` is always loaded via `package.json`
+- that root `resources.json` is an empty always-on catalog
 - that `skill ephemeral-example` is optional until enabled
 - that no existing Pi resources were modified
 - how to add more resources later by copying files into `ephemeral/` and adding entries to `ephemeral/resources.json`
