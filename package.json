@@ -24,7 +24,7 @@
     "access": "public"
   },
   "bin": {
-    "pi-ephemeral": "./dist/cli.js"
+    "pi-ephemeral": "dist/cli.js"
   },
   "pi": {
     "extensions": [
