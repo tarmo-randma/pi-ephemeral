@@ -5,6 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 RUN_PI_SMOKE="${RUN_PI_SMOKE:-0}"
 RUN_KITTY_SMOKE="${RUN_KITTY_SMOKE:-0}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$(mktemp -d /tmp/pi-ephemeral-installed-smoke-XXXXXX)}"
+if [[ "$ARTIFACT_ROOT" != /* ]]; then
+  ARTIFACT_ROOT="$(pwd -P)/$ARTIFACT_ROOT"
+fi
 
 mkdir -p "$ARTIFACT_ROOT"
 echo "Artifacts: $ARTIFACT_ROOT"
