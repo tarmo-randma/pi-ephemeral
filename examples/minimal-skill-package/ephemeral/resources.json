@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "type": "skill",
+      "name": "ephemeral-example",
+      "path": "ephemeral/skills/ephemeral-example",
+      "description": "Demonstrates an optional Pi skill managed by pi-ephemeral."
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-# Pi Ephemeral Current Functionality Spec
+# pi-ephemeral Current Functionality Reference
 
 `pi-ephemeral` manages optional Pi resources from a host package catalog. It exposes both a Node CLI (`pi-ephemeral`) and a Pi extension command (`/pi-ephemeral`) backed by the same catalog, state, planning, and symlink-application core.
 
@@ -128,9 +128,7 @@ TUI behavior:
 
 ## Host package integration
 
-`pi-ephemeral` is a reusable package. A host Pi package provides the actual catalogs. In this workstation, the host package is `my-infrastructure/pi-package`.
-
-The host package loads `pi-ephemeral` as its always-on/bootstrap extension. Optional resources live under `ephemeral/` and are activated by symlink through `pi-ephemeral` state. Ansible may install the host package, link repo-backed global activation state, and run `pi-ephemeral repair` to materialize symlinks, but runtime activation mechanics belong to `pi-ephemeral`.
+A host Pi package provides catalogs and loads the `pi-ephemeral` extension. Optional resources usually live under `ephemeral/` and are activated by symlink through `pi-ephemeral` state. Existing sessions need Pi reload/startup boundaries to see changed resources.
 
 ## Validation expectations
 

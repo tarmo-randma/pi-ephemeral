@@ -1,0 +1,16 @@
+{
+  "name": "pi-ephemeral-example-resources",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal example Pi package using pi-ephemeral for optional resources.",
+  "type": "module",
+  "keywords": ["pi-package", "pi-ephemeral", "example"],
+  "dependencies": {
+    "@tarmo-randma/pi-ephemeral": "^0.1.0"
+  },
+  "pi": {
+    "extensions": [
+      "./node_modules/@tarmo-randma/pi-ephemeral/dist/index.js"
+    ]
+  }
+}
