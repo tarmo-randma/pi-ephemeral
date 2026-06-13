@@ -42,7 +42,7 @@
     "build": "tsc -p tsconfig.build.json",
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --exclude tests/package/**",
     "test:watch": "vitest",
     "pack:check": "npm pack --dry-run",
     "test:package": "vitest run tests/package/installed-package.test.ts"

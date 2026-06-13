@@ -85,7 +85,7 @@ describe("installed package shape", () => {
 
       const skillLink = join(agentDir, "skills", "ephemeral-example");
       const resolvedSkill = await realpath(skillLink);
-      expect(resolvedSkill).toContain(await realpath(hostDir));
+      expect(resolvedSkill).toBe(await realpath(join(hostDir, "ephemeral", "skills", "ephemeral-example")));
 
       const repair = await invoke(["repair", "--all", ...base]);
       expect(repair.exitCode).toBe(0);
