@@ -17,6 +17,12 @@ https://github.com/tarmo-randma/pi-ephemeral/blob/main/docs/create-example-packa
 Create only the example package from the guide. Do not copy, move, remove, or modify any of my existing Pi resources. After creating the package, explain what was created and ask me before installing it.
 ```
 
+If your terminal submits multi-line prompts early, use this single-line prompt instead:
+
+```text
+Create a local example Pi package at ~/.pi/packages/pi-ephemeral-example-resources that uses @tarmo-randma/pi-ephemeral by following https://github.com/tarmo-randma/pi-ephemeral/blob/main/docs/create-example-package.md; create only that package, do not copy, move, remove, or modify any existing Pi resources, run npm install inside the package, explain what was created, and ask me before installing it into Pi.
+```
+
 The example package contains one optional skill, `ephemeral-example`, so you can see the flow before adapting the package for your own resources.
 
 ## How it works
