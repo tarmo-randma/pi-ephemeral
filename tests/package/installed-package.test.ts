@@ -101,7 +101,7 @@ describe("installed package shape", () => {
       const resolvedSkill = await realpath(skillLink);
       expect(resolvedSkill).toBe(await realpath(join(hostDir, "ephemeral", "skills", "ephemeral-example")));
 
-      const repair = await invoke(["repair", "--all", ...base]);
+      const repair = await invoke(["repair", ...base]);
       expect(repair.exitCode).toBe(0);
 
       const disable = await invoke(["disable", "skill", "ephemeral-example", "--global", ...base]);

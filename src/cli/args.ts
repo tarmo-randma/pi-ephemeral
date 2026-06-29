@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import type { ResourceType } from "../core/types.js";
 
 interface BaseCommand {
@@ -17,7 +18,7 @@ export type CliCommand =
   | (BaseCommand & { command: "info"; mode: "query"; query: string; width: number })
   | (BaseCommand & { command: "enable"; type: ResourceType; name: string; scope: "global" | "project" })
   | (BaseCommand & { command: "disable"; type: ResourceType; name: string; scope: "global" | "project" })
-  | (BaseCommand & { command: "repair"; type?: ResourceType; name?: string; scope?: "global" | "project"; all: boolean });
+  | (BaseCommand & { command: "repair" });
 
 const COMMANDS = ["list", "status", "info", "enable", "disable", "repair"] as const;
 const RESOURCE_TYPES = ["skill", "extension", "prompt", "theme"] as const;
@@ -51,12 +52,11 @@ disable
   Pattern: pi-ephemeral disable <type> <name> [--global|--project] [--json] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
 
 repair
-  Repair active resources after package or catalog changes.
-  Recreates stale symlinks, removes missing activations, refreshes state, and prunes stale project index entries when --all is used.
-  Pattern: pi-ephemeral repair [<type> <name>] [--global|--project|--all] [--json] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
+  Repair active resources everywhere relevant: global activations, indexed projects, and the current project when it has .pi/pi-ephemeral.json with activations.
+  Pattern: pi-ephemeral repair [--json] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
 
 Common flags
-  --package <dir>: package/catalog root; normally inferred, use for tests/manual package selection.
+  --package <dir>: explicit package/catalog root; overrides packageRoot from global pi-ephemeral config.
   --agent-dir <dir>: Pi agent config dir; defaults to ~/.pi/agent, mainly for tests/alternate profiles.
   --cwd <dir>: project context for project state resolution; defaults to current directory.
   --json: machine-readable output for scripts; stable exact-command shape.
@@ -67,25 +67,6 @@ Types: skill, extension, prompt, theme
 
 function isResourceType(value: string): value is ResourceType {
   return (RESOURCE_TYPES as readonly string[]).includes(value);
-}
-
-function inferPackageRoot(cwd: string): string | undefined {
-  let current = resolve(cwd);
-  while (true) {
-    const packageJson = `${current}/package.json`;
-    if (existsSync(packageJson)) {
-      try {
-        const pkg = JSON.parse(readFileSync(packageJson, "utf8")) as { name?: unknown };
-        if (pkg.name === "pi-ephemeral") return current;
-      } catch {
-        // Keep walking; malformed unrelated package.json should not mask --package guidance.
-      }
-    }
-    if (existsSync(`${current}/resources.json`) && existsSync(`${current}/ephemeral/resources.json`)) return current;
-    const parent = dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
-  }
 }
 
 function rejectSlashAndShort(token: string): void {
@@ -100,8 +81,10 @@ function parseWidth(value: string | undefined): number {
   return width;
 }
 
-function parseOptions(tokens: string[]): { all: boolean; json: boolean; width: number; filter?: string; scope?: "global" | "project"; packageRoot?: string; agentDir?: string; cwd: string } {
-  const options: { all: boolean; json: boolean; width: number; filter?: string; scope?: "global" | "project"; packageRoot?: string; agentDir?: string; cwd: string } = { all: false, json: false, width: 100, cwd: process.cwd() };
+type ParsedOptions = { all: boolean; json: boolean; width: number; filter?: string; scope?: "global" | "project"; packageRoot?: string; agentDir?: string; cwd: string };
+
+function parseOptions(tokens: string[]): ParsedOptions {
+  const options: ParsedOptions = { all: false, json: false, width: 100, cwd: process.cwd() };
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!;
     rejectSlashAndShort(token);
@@ -128,8 +111,26 @@ function parseOptions(tokens: string[]): { all: boolean; json: boolean; width: n
   return options;
 }
 
-function requirePackageRoot(options: ReturnType<typeof parseOptions>): string {
-  const packageRoot = options.packageRoot ?? inferPackageRoot(options.cwd);
+function defaultAgentDir(): string {
+  return process.env.PI_CODING_AGENT_DIR ? resolve(process.env.PI_CODING_AGENT_DIR) : join(homedir(), ".pi", "agent");
+}
+
+function packageRootFromGlobalConfig(agentDir: string): string | undefined {
+  const configPath = join(agentDir, "pi-ephemeral-global.json");
+  let parsed: { packageRoot?: unknown };
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf8")) as { packageRoot?: unknown };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (parsed.packageRoot === undefined) return undefined;
+  if (typeof parsed.packageRoot !== "string" || parsed.packageRoot.trim().length === 0) throw new ArgParseError(`Invalid packageRoot in ${configPath}`);
+  return resolve(dirname(configPath), parsed.packageRoot);
+}
+
+function requirePackageRoot(options: Pick<ParsedOptions, "packageRoot" | "agentDir">): string {
+  const packageRoot = options.packageRoot ?? packageRootFromGlobalConfig(options.agentDir ?? defaultAgentDir());
   if (!packageRoot) throw new ArgParseError("Could not infer package root; pass --package <dir>");
   return packageRoot;
 }
@@ -139,8 +140,29 @@ function parseType(value: string | undefined): ResourceType {
   return value;
 }
 
-function rejectUnsupportedFilter(command: string, options: ReturnType<typeof parseOptions>): void {
+function rejectUnsupportedFilter(command: string, options: Pick<ParsedOptions, "filter">): void {
   if (options.filter) throw new ArgParseError(`${command} does not accept --filter`);
+}
+
+function parseRepairOptions(tokens: string[]): Pick<ParsedOptions, "json" | "packageRoot" | "agentDir" | "cwd"> {
+  const options: Pick<ParsedOptions, "json" | "packageRoot" | "agentDir" | "cwd"> = { json: false, cwd: process.cwd() };
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]!;
+    if (token === "--all") throw new ArgParseError("repair does not accept --all");
+    if (token === "--global" || token === "--project") throw new ArgParseError("repair does not accept scope flags");
+    if (token === "--filter") throw new ArgParseError("repair does not accept --filter");
+    if (token === "--width" || token === "-w") throw new ArgParseError("repair does not accept --width");
+    if (!token.startsWith("--")) throw new ArgParseError("repair does not accept resource arguments");
+    if (token === "--json") options.json = true;
+    else if (CONTEXT_FLAGS.has(token)) {
+      const value = tokens[++i];
+      if (!value || value.startsWith("-")) throw new ArgParseError(`${token} requires a value`);
+      if (token === "--package") options.packageRoot = resolve(value);
+      else if (token === "--agent-dir") options.agentDir = resolve(value);
+      else options.cwd = resolve(value);
+    } else throw new ArgParseError(`Unknown flag ${token}`);
+  }
+  return options;
 }
 
 export function parseArgs(argv: string[]): CliCommand {
@@ -186,17 +208,6 @@ export function parseArgs(argv: string[]): CliCommand {
     return { command, type, name, scope: options.scope ?? "project", json: options.json, packageRoot: requirePackageRoot(options), agentDir: options.agentDir, cwd: options.cwd };
   }
 
-  let type: ResourceType | undefined;
-  let name: string | undefined;
-  let optionTokens = rest;
-  if (rest[0] && !rest[0].startsWith("--")) {
-    if (!rest[1] || rest[1].startsWith("--")) throw new ArgParseError(`Invalid usage for repair.\n${HELP_TEXT}`);
-    type = parseType(rest[0]);
-    name = rest[1];
-    optionTokens = rest.slice(2);
-  }
-  const options = parseOptions(optionTokens);
-  if (options.all && options.scope) throw new ArgParseError("Conflicting repair scope flags: use --all or one scope flag");
-  rejectUnsupportedFilter("repair", options);
-  return { command: "repair", type, name, scope: options.scope, all: options.all, json: options.json, packageRoot: requirePackageRoot(options), agentDir: options.agentDir, cwd: options.cwd };
+  const options = parseRepairOptions(rest);
+  return { command: "repair", json: options.json, packageRoot: requirePackageRoot(options), agentDir: options.agentDir, cwd: options.cwd };
 }

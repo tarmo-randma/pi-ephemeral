@@ -59,4 +59,4 @@ For command-mode fallback inside Pi, use `/pi-ephemeral list` and `/pi-ephemeral
 
 If this local package is already installed, do not reinstall the same path as a way to apply edits. Edit the package files directly.
 
-After editing package resources or catalogs, run `/reload` or restart Pi so package metadata is read again. If already-enabled resources need symlinks refreshed, run `/pi-ephemeral repair --all`.
+After editing package resources or catalogs, run `/reload` or restart Pi so package metadata is read again. If already-enabled resources need symlinks refreshed, run `/pi-ephemeral repair`.

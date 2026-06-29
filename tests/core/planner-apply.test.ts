@@ -135,6 +135,42 @@ describe("planner/apply", () => {
     await expect(readActivationState(join(ctx.agentDir, "pi-ephemeral-global.json"))).resolves.toEqual({ version: 1, activations: [{ type: "skill", name: "renamed", target: "skills/new-dir" }] });
   });
 
+  it("preserves global packageRoot when enable writes global state", async () => {
+    const ctx = await context();
+    await writeCatalog(ctx.packageRoot, [{ type: "skill", name: "rooted", path: await skill(ctx.packageRoot, "rooted") }]);
+    await writeFile(join(ctx.agentDir, "pi-ephemeral-global.json"), JSON.stringify({
+      version: 1,
+      packageRoot: "../pkg",
+      activations: [],
+    }, null, 2) + "\n");
+
+    await applyPlan(await planEnable({ ...ctx, scope: "global", type: "skill", name: "rooted" }));
+
+    await expect(readActivationState(join(ctx.agentDir, "pi-ephemeral-global.json"), { scope: "global" })).resolves.toEqual({
+      version: 1,
+      packageRoot: "../pkg",
+      activations: [{ type: "skill", name: "rooted", target: "skills/rooted" }],
+    });
+  });
+
+  it("preserves global packageRoot when repair rewrites global state", async () => {
+    const ctx = await context();
+    await writeCatalog(ctx.packageRoot, [{ type: "skill", name: "moved", path: await skill(ctx.packageRoot, "new-moved") }]);
+    await writeFile(join(ctx.agentDir, "pi-ephemeral-global.json"), JSON.stringify({
+      version: 1,
+      packageRoot: "../pkg",
+      activations: [{ type: "skill", name: "moved", target: "skills/old-moved" }],
+    }, null, 2) + "\n");
+
+    await applyPlan(await planUpdateAll(ctx));
+
+    await expect(readActivationState(join(ctx.agentDir, "pi-ephemeral-global.json"), { scope: "global" })).resolves.toEqual({
+      version: 1,
+      packageRoot: "../pkg",
+      activations: [{ type: "skill", name: "moved", target: "skills/new-moved" }],
+    });
+  });
+
   it("recreates stale symlink without rewriting unchanged state", async () => {
     const ctx = await context();
     await writeCatalog(ctx.packageRoot, [{ type: "skill", name: "stale", path: await skill(ctx.packageRoot, "stale") }]);
@@ -174,6 +210,25 @@ describe("planner/apply", () => {
     const collision = await planEnable({ ...ctx, scope: "global", type: "skill", name: "other" });
     expect(collision.ok).toBe(false);
     expect(collision.errors.some((e) => e.code === "target_collision")).toBe(true);
+  });
+
+  it("comprehensive repair includes current project and indexes it when it has activations", async () => {
+    const ctx = await context();
+    await writeCatalog(ctx.packageRoot, [{ type: "skill", name: "current", path: await skill(ctx.packageRoot, "current") }]);
+    await mkdir(join(ctx.projectRoot, ".pi"), { recursive: true });
+    await writeFile(join(ctx.projectRoot, ".pi", "pi-ephemeral.json"), JSON.stringify({
+      version: 1,
+      activations: [{ type: "skill", name: "current", target: ".pi/skills/current" }],
+    }, null, 2) + "\n");
+
+    const plan = await planUpdateAll(ctx);
+    expect(plan.ok).toBe(true);
+    expect(plan.changes.some((change) => change.action === "create_symlink" && change.scope === "project")).toBe(true);
+    expect(plan.changes.some((change) => change.action === "write_project_index")).toBe(true);
+    await applyPlan(plan);
+
+    expect((await loadProjectIndex(join(ctx.agentDir, "pi-ephemeral-projects.json"))).projects).toEqual([ctx.projectRoot]);
+    await expect(readFile(join(ctx.projectRoot, ".pi", "skills", "current", "SKILL.md"), "utf8")).resolves.toContain("skill");
   });
 
   it("prunes stale project index entries during update all", async () => {

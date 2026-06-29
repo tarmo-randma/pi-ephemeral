@@ -10,6 +10,7 @@ export interface ActivationRecord {
 
 export interface ActivationState {
   version: 1;
+  packageRoot?: string;
   activations: ActivationRecord[];
 }
 
@@ -43,7 +44,7 @@ export function normalizeActivationState(state: ActivationState): ActivationStat
   const activations = [...state.activations]
     .map(canonicalActivation)
     .sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
-  return { version: 1, activations };
+  return { version: 1, ...(state.packageRoot ? { packageRoot: state.packageRoot } : {}), activations };
 }
 
 export function activationIdentity(record: Pick<ActivationRecord, "type" | "name">): string {
@@ -84,9 +85,19 @@ function parseActivationState(raw: unknown, statePath: string, options: ReadActi
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new StateFileError("invalid_state", statePath, `Invalid state file ${statePath}: expected object`);
   }
-  const candidate = raw as { version?: unknown; activations?: unknown };
+  const candidate = raw as { version?: unknown; packageRoot?: unknown; activations?: unknown };
   if (candidate.version !== 1 || !Array.isArray(candidate.activations)) {
     throw new StateFileError("invalid_state", statePath, `Invalid state file ${statePath}: expected version 1 activations`);
+  }
+  let packageRoot: string | undefined;
+  if (candidate.packageRoot !== undefined) {
+    if (options.scope !== "global") {
+      throw new StateFileError("invalid_state", statePath, `Invalid state file ${statePath}: packageRoot is only supported in global state`);
+    }
+    if (typeof candidate.packageRoot !== "string" || candidate.packageRoot.trim().length === 0) {
+      throw new StateFileError("invalid_state", statePath, `Invalid state file ${statePath}: packageRoot must be a non-empty string`);
+    }
+    packageRoot = candidate.packageRoot;
   }
   const activations: ActivationRecord[] = [];
   for (const item of candidate.activations) {
@@ -103,7 +114,7 @@ function parseActivationState(raw: unknown, statePath: string, options: ReadActi
     assertSafeActivationTarget(record.target, statePath, options.scope);
     activations.push({ type: record.type, name: record.name, target: record.target });
   }
-  return normalizeActivationState({ version: 1, activations });
+  return normalizeActivationState({ version: 1, ...(packageRoot ? { packageRoot } : {}), activations });
 }
 
 export async function readActivationState(statePath: string, options: ReadActivationStateOptions = {}): Promise<ActivationState> {
@@ -141,6 +152,7 @@ export function upsertActivation(state: ActivationState, activation: ActivationR
   const identity = activationIdentity(activation);
   return normalizeActivationState({
     version: 1,
+    ...(state.packageRoot ? { packageRoot: state.packageRoot } : {}),
     activations: [...state.activations.filter((item) => activationIdentity(item) !== identity), activation],
   });
 }
@@ -149,7 +161,7 @@ export function removeActivation(state: ActivationState, type: ResourceType, nam
   const identity = `${type}:${name}`;
   const removed = state.activations.find((item) => activationIdentity(item) === identity);
   return {
-    state: normalizeActivationState({ version: 1, activations: state.activations.filter((item) => activationIdentity(item) !== identity) }),
+    state: normalizeActivationState({ version: 1, ...(state.packageRoot ? { packageRoot: state.packageRoot } : {}), activations: state.activations.filter((item) => activationIdentity(item) !== identity) }),
     removed,
   };
 }

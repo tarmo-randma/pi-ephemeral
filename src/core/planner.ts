@@ -1,7 +1,7 @@
 import { lstat, mkdir, readlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { loadCatalogSet } from "./catalog.js";
-import { globalStatePath, loadProjectIndex, projectExists, projectIndexPath, projectStatePath } from "./project-index.js";
+import { globalStatePath, hasProjectState, loadProjectIndex, projectExists, projectIndexPath, projectStatePath } from "./project-index.js";
 import { activationIdentity, readActivationState, removeActivation, upsertActivation, type ActivationRecord, type ActivationState } from "./state.js";
 import type { CatalogProblem, LoadedResource, ResourceType } from "./types.js";
 
@@ -241,7 +241,7 @@ async function updateGlobalActivations(ctx: PlannerContext, requested?: { type: 
     errors.push(...refreshed.errors);
     nextGlobal.push(refreshed.next ?? activation);
   }
-  const normalizedGlobal = { version: 1 as const, activations: nextGlobal };
+  const normalizedGlobal: ActivationState = { version: 1, ...(globalState.packageRoot ? { packageRoot: globalState.packageRoot } : {}), activations: nextGlobal };
   if (JSON.stringify(globalState) !== JSON.stringify(normalizedGlobal)) {
     changes.push({ action: "write_state", scope: "global", statePath: globalPath, state: normalizedGlobal, identity: requestedId, message: requestedId ? `Update global activation state for ${requestedId}` : "Update global activation state" });
   }
@@ -358,9 +358,17 @@ export async function planUpdateAll(ctx: PlannerContext): Promise<OperationPlan>
 
   const indexPath = projectIndexPath(ctx.agentDir);
   const index = await loadProjectIndex(indexPath);
+  const projectSet = new Set(index.projects);
+
+  if (await hasProjectState(ctx.projectRoot)) {
+    const currentState = await readActivationState(projectStatePath(ctx.projectRoot), { scope: "project" });
+    if (currentState.activations.length > 0) projectSet.add(ctx.projectRoot);
+  }
+
   const keptProjects: string[] = [];
-  for (const projectRoot of index.projects) {
+  for (const projectRoot of [...projectSet].sort()) {
     if (!(await projectExists(projectRoot))) continue;
+    if (!(await hasProjectState(projectRoot))) continue;
     const project = await updateProjectActivations(ctx, projectRoot, undefined, global.state.activations);
     changes.push(...project.changes);
     warnings.push(...project.warnings);

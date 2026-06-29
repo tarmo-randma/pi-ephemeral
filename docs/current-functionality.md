@@ -97,14 +97,18 @@ Enables or disables one optional resource in the selected scope. Default scope i
 ### `repair`
 
 ```bash
-pi-ephemeral repair [<type> <name>] [--global|--project|--all] [--json] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
+pi-ephemeral repair [--json] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
 ```
 
-Repairs active resources after package or catalog changes. It refreshes symlinks/state, removes missing activations, and prunes stale project index entries when `--all` is used. `repair` does not enable inactive resources and is not a package upgrade command.
+Repairs active resources everywhere relevant: global activations, indexed projects, and the current project when it has `.pi/pi-ephemeral.json` with activations. It updates symlinks for activations found in the catalog, reports skipped missing catalog entries without removing those activations, prunes stale or empty project index entries, and does not enable inactive resources or upgrade packages.
+
+### Global config package root
+
+The standalone CLI reads `packageRoot` from `~/.pi/agent/pi-ephemeral-global.json` when `--package` is not supplied. The file is a combined global config/state document. Global state writes preserve config fields such as `packageRoot`. Relative paths are resolved relative to the path used to open the global config file, normally `~/.pi/agent/`, not the symlink target realpath.
 
 ### Common CLI flags
 
-- `--package <dir>`: package/catalog root. Usually inferred; useful for tests and manual package selection.
+- `--package <dir>`: explicit package/catalog root; overrides `packageRoot` from global pi-ephemeral config.
 - `--agent-dir <dir>`: Pi agent config directory. Defaults to `~/.pi/agent` or `PI_CODING_AGENT_DIR` where applicable.
 - `--cwd <dir>`: project context for project state resolution. Defaults to current directory.
 - `--json`: machine-readable output for scripts. Exact command JSON shapes are kept stable.

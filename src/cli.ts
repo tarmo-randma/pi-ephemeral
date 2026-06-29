@@ -10,7 +10,7 @@ import { buildResourceDisplayRows, type ResourceDisplayRow } from "./core/resour
 import { filterBundleDisplayTreeByQuery, searchResourceDisplayRows } from "./core/resource-search.js";
 import { formatPlanHuman } from "./core/output.js";
 import { globalStatePath, loadProjectIndex, projectStatePath, resolveProjectRoot } from "./core/project-index.js";
-import { planDisable, planEnable, planUpdateAll, planUpdateCurrent, planUpdateGlobal, planUpdateProject, planUpdateTarget, planUpdateTargetAll, type OperationPlan } from "./core/planner.js";
+import { planDisable, planEnable, planUpdateAll, type OperationPlan } from "./core/planner.js";
 import { activationIdentity, readActivationState, StateFileError, type ActivationRecord } from "./core/state.js";
 import type { LoadedResource } from "./core/types.js";
 import { ArgParseError, HELP_TEXT, parseArgs, type CliCommand } from "./cli/args.js";
@@ -342,12 +342,7 @@ function infoHuman(output: Awaited<ReturnType<typeof infoOutput>>): string {
 async function mutationPlan(command: Extract<CliCommand, { command: "enable" | "disable" | "repair" }>, ctx: ResolvedContext): Promise<OperationPlan> {
   if (command.command === "enable") return planEnable({ ...ctx, scope: command.scope, type: command.type, name: command.name });
   if (command.command === "disable") return planDisable({ ...ctx, scope: command.scope, type: command.type, name: command.name });
-  if (command.type && command.name && command.all) return planUpdateTargetAll(ctx, command.type, command.name);
-  if (command.type && command.name) return planUpdateTarget(ctx, command.type, command.name, command.scope);
-  if (command.scope === "global") return planUpdateGlobal(ctx);
-  if (command.scope === "project") return planUpdateProject(ctx);
-  if (command.all) return planUpdateAll(ctx);
-  return planUpdateCurrent(ctx);
+  return planUpdateAll(ctx);
 }
 
 function errorText(error: unknown): string {

@@ -37,7 +37,10 @@ describe("extension slash command", () => {
     expect(parseSlashArgs("list --width 80")).toMatchObject({ command: "list", width: 80 });
     expect(parseSlashArgs("list -w 80")).toMatchObject({ command: "list", width: 80 });
     expect(parseSlashArgs("disable skill brainstorming --project")).toMatchObject({ command: "disable", type: "skill", name: "brainstorming", scope: "project" });
-    expect(parseSlashArgs("repair skill brainstorming --all --json")).toMatchObject({ command: "repair", type: "skill", name: "brainstorming", all: true, json: true });
+    expect(parseSlashArgs("repair --json")).toMatchObject({ command: "repair", json: true });
+    expect(() => parseSlashArgs("repair --global")).toThrow(/repair does not accept scope flags/i);
+    expect(() => parseSlashArgs("repair --all")).toThrow(/repair does not accept --all/i);
+    expect(() => parseSlashArgs("repair skill brainstorming")).toThrow(/repair does not accept resource arguments/i);
 
     expect(() => parseSlashArgs("enable skill foo --cwd /tmp")).toThrow(/CLI-only/);
     expect(() => parseSlashArgs("enable skill foo --package /tmp")).toThrow(/CLI-only/);
@@ -65,12 +68,12 @@ describe("extension slash command", () => {
     expect(info).toContain("Action      : enable");
   });
 
-  it("runs slash repair against global and current project by default", async () => {
+  it("runs slash repair against global, current project, and indexed projects", async () => {
     const fx = await fixture();
     const indexedProject = join(fx.projectRoot, "indexed");
     await mkdir(join(indexedProject, ".pi"), { recursive: true });
     await handleSlashCommand("enable skill brainstorming --project", ctx(fx.projectRoot), { packageRoot: fx.packageRoot, agentDir: fx.agentDir });
-    await writeFile(join(indexedProject, ".pi", "pi-ephemeral.json"), "{ nope");
+    await writeFile(join(indexedProject, ".pi", "pi-ephemeral.json"), JSON.stringify({ version: 1, activations: [{ type: "skill", name: "brainstorming", target: ".pi/skills/brainstorming" }] }, null, 2) + "\n");
     await writeFile(join(fx.agentDir, "pi-ephemeral-projects.json"), JSON.stringify({ version: 1, projects: [fx.projectRoot, indexedProject] }, null, 2) + "\n");
 
     const result = await handleSlashCommand("repair --json", ctx(fx.projectRoot), { packageRoot: fx.packageRoot, agentDir: fx.agentDir });
@@ -82,6 +85,7 @@ describe("extension slash command", () => {
         activations: [
           { scope: "global", activations: [] },
           { scope: "project", projectRoot: fx.projectRoot, activations: [{ type: "skill", name: "brainstorming" }] },
+          { scope: "project", projectRoot: indexedProject, activations: [{ type: "skill", name: "brainstorming" }] },
         ],
       },
     });

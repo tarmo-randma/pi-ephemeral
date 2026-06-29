@@ -30,6 +30,50 @@ describe("activation state files", () => {
     ] }, null, 2) + "\n");
   });
 
+  it("reads optional global packageRoot while preserving activations", async () => {
+    const dir = await tempDir();
+    const statePath = join(dir, "pi-ephemeral-global.json");
+    await writeFile(statePath, JSON.stringify({
+      version: 1,
+      packageRoot: "../../Projects/my-infrastructure/pi-package",
+      activations: [{ type: "skill", name: "x", target: "skills/x" }],
+    }));
+
+    await expect(readActivationState(statePath, { scope: "global" })).resolves.toEqual({
+      version: 1,
+      packageRoot: "../../Projects/my-infrastructure/pi-package",
+      activations: [{ type: "skill", name: "x", target: "skills/x" }],
+    });
+  });
+
+  it("rejects blank global packageRoot", async () => {
+    const dir = await tempDir();
+    const statePath = join(dir, "pi-ephemeral-global.json");
+    await writeFile(statePath, JSON.stringify({ version: 1, packageRoot: " ", activations: [] }));
+
+    await expect(readActivationState(statePath, { scope: "global" })).rejects.toMatchObject({
+      name: "StateFileError",
+      path: statePath,
+      code: "invalid_state",
+    });
+  });
+
+  it("rejects packageRoot in project state", async () => {
+    const dir = await tempDir();
+    const statePath = join(dir, "pi-ephemeral.json");
+    await writeFile(statePath, JSON.stringify({
+      version: 1,
+      packageRoot: "../pkg",
+      activations: [{ type: "skill", name: "x", target: ".pi/skills/x" }],
+    }));
+
+    await expect(readActivationState(statePath, { scope: "project" })).rejects.toMatchObject({
+      name: "StateFileError",
+      path: statePath,
+      code: "invalid_state",
+    });
+  });
+
   it("does not rewrite unchanged canonical content", async () => {
     const dir = await tempDir();
     const statePath = join(dir, "state.json");

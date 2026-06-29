@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HELP_TEXT, parseArgs } from "../../src/cli/args.js";
 
@@ -23,16 +24,21 @@ describe("CLI argument parser", () => {
     expect(parseArgs(["status", "-w", "72", "--package", packageRoot])).toMatchObject({ command: "status", width: 72 });
     expect(parseArgs(["info", "librarian", "--package", packageRoot])).toMatchObject({ command: "info", mode: "query", query: "librarian", width: 100 });
     expect(parseArgs(["info", "skill", "brainstorming", "--package", packageRoot])).toMatchObject({ command: "info", mode: "exact", type: "skill", name: "brainstorming", width: 100 });
-    expect(parseArgs(["repair", "--package", packageRoot])).toMatchObject({ command: "repair", all: false, json: false });
-    expect(parseArgs(["repair", "skill", "librarian", "--global", "--package", packageRoot])).toMatchObject({ command: "repair", type: "skill", name: "librarian", scope: "global" });
+    expect(parseArgs(["repair", "--package", packageRoot])).toMatchObject({ command: "repair", json: false });
+    expect(() => parseArgs(["repair", "--global", "--package", packageRoot])).toThrow(/repair does not accept scope flags/i);
+    expect(() => parseArgs(["repair", "--project", "--package", packageRoot])).toThrow(/repair does not accept scope flags/i);
+    expect(() => parseArgs(["repair", "--all", "--package", packageRoot])).toThrow(/repair does not accept --all/i);
+    expect(() => parseArgs(["repair", "--width", "80", "--package", packageRoot])).toThrow(/repair does not accept --width/i);
+    expect(() => parseArgs(["repair", "-w", "80", "--package", packageRoot])).toThrow(/repair does not accept --width/i);
+    expect(() => parseArgs(["repair", "skill", "librarian", "--package", packageRoot])).toThrow(/repair does not accept resource arguments/i);
     expect(() => parseArgs(["update", "--package", packageRoot])).toThrow(/Unknown command update/);
   });
 
   it("formats help as plain-language command blocks", () => {
-    expect(HELP_TEXT).toContain("repair\n  Repair active resources after package or catalog changes.");
-    expect(HELP_TEXT).toContain("Pattern: pi-ephemeral repair [<type> <name>] [--global|--project|--all]");
+    expect(HELP_TEXT).toContain("repair\n  Repair active resources everywhere relevant: global activations, indexed projects, and the current project when it has .pi/pi-ephemeral.json with activations.");
+    expect(HELP_TEXT).toContain("Pattern: pi-ephemeral repair [--json]");
     expect(HELP_TEXT).toContain("Common flags");
-    expect(HELP_TEXT).toContain("--package <dir>: package/catalog root; normally inferred, use for tests/manual package selection.");
+    expect(HELP_TEXT).toContain("--package <dir>: explicit package/catalog root; overrides packageRoot from global pi-ephemeral config.");
     expect(HELP_TEXT).toContain("--agent-dir <dir>: Pi agent config dir; defaults to ~/.pi/agent, mainly for tests/alternate profiles.");
     expect(HELP_TEXT).toContain("--cwd <dir>: project context for project state resolution; defaults to current directory.");
     expect(HELP_TEXT).toContain("--json: machine-readable output for scripts; stable exact-command shape.");
@@ -64,7 +70,7 @@ describe("CLI argument parser", () => {
     expect(() => parseArgs(["enable", "skill", "brainstorming", "--filter", "x", "--package", process.cwd()])).toThrow(/--filter/i);
     expect(() => parseArgs(["disable", "skill", "brainstorming", "--filter", "x", "--package", process.cwd()])).toThrow(/--filter/i);
     expect(() => parseArgs(["repair", "--filter", "x", "--package", process.cwd()])).toThrow(/--filter/i);
-    expect(() => parseArgs(["repair", "skill", "brainstorming", "--filter", "x", "--package", process.cwd()])).toThrow(/--filter/i);
+    expect(() => parseArgs(["repair", "skill", "brainstorming", "--filter", "x", "--package", process.cwd()])).toThrow(/resource arguments/i);
     expect(() => parseArgs(["info", "skill", "--package", process.cwd()])).toThrow(/usage/i);
     expect(() => parseArgs(["enable", "skills", "brainstorming", "--package", process.cwd()])).toThrow(/resource type/i);
   });
@@ -74,8 +80,58 @@ describe("CLI argument parser", () => {
     expect(() => parseArgs(["enable", "--global", "skill", "brainstorming", "--package", process.cwd()])).toThrow(/usage/i);
   });
 
-  it("requires package root when context cannot be inferred", () => {
-    expect(() => parseArgs(["list", "--cwd", "/tmp/definitely-not-pi-ephemeral"])).toThrow(/--package/);
+  it("uses global config packageRoot when --package is omitted", async () => {
+    const dir = await import("node:fs/promises").then(({ mkdtemp }) => mkdtemp(join(process.cwd(), "node_modules/.tmp-args-")));
+    const agentDir = join(dir, "agent");
+    const packageRoot = join(dir, "pkg");
+    const fs = await import("node:fs/promises");
+    await Promise.all([
+      fs.mkdir(agentDir, { recursive: true }),
+      fs.mkdir(join(packageRoot, "ephemeral"), { recursive: true }),
+    ]);
+    await Promise.all([
+      fs.writeFile(join(packageRoot, "resources.json"), JSON.stringify({ version: 1, resources: [] })),
+      fs.writeFile(join(packageRoot, "ephemeral", "resources.json"), JSON.stringify({ version: 1, resources: [] })),
+    ]);
+    await import("node:fs/promises").then(({ writeFile }) => writeFile(
+      join(agentDir, "pi-ephemeral-global.json"),
+      JSON.stringify({ version: 1, packageRoot: "../pkg", activations: [] }, null, 2) + "\n",
+    ));
+
+    expect(parseArgs(["repair", "--agent-dir", agentDir, "--cwd", dir])).toMatchObject({
+      command: "repair",
+      packageRoot,
+    });
+  });
+
+  it("resolves relative packageRoot from the agent-dir path, not its realpath", async () => {
+    const fs = await import("node:fs/promises");
+    const dir = await fs.mkdtemp(join(process.cwd(), "node_modules/.tmp-args-symlink-"));
+    const realAgentDir = join(dir, "real-agent");
+    const symlinkParent = join(dir, "link-parent");
+    const symlinkAgentDir = join(symlinkParent, "agent");
+    const packageRootFromSymlink = join(symlinkParent, "pkg");
+    await fs.mkdir(realAgentDir, { recursive: true });
+    await fs.mkdir(join(packageRootFromSymlink, "ephemeral"), { recursive: true });
+    await fs.mkdir(symlinkParent, { recursive: true });
+    await fs.writeFile(join(packageRootFromSymlink, "resources.json"), JSON.stringify({ version: 1, resources: [] }));
+    await fs.writeFile(join(packageRootFromSymlink, "ephemeral", "resources.json"), JSON.stringify({ version: 1, resources: [] }));
+    await fs.writeFile(join(realAgentDir, "pi-ephemeral-global.json"), JSON.stringify({ version: 1, packageRoot: "../pkg", activations: [] }, null, 2) + "\n");
+    await fs.symlink(realAgentDir, symlinkAgentDir);
+
+    expect(parseArgs(["repair", "--agent-dir", symlinkAgentDir, "--cwd", dir])).toMatchObject({
+      command: "repair",
+      packageRoot: packageRootFromSymlink,
+    });
+  });
+
+  it("requires package root when context cannot be inferred", async () => {
+    const fs = await import("node:fs/promises");
+    const dir = await fs.mkdtemp(join(process.cwd(), "node_modules/.tmp-args-empty-agent-"));
+    const agentDir = join(dir, "agent");
+    await fs.mkdir(agentDir, { recursive: true });
+
+    expect(() => parseArgs(["list", "--agent-dir", agentDir, "--cwd", "/tmp/definitely-not-pi-ephemeral"])).toThrow(/--package/);
   });
 
   it("rejects conflicting scopes", () => {

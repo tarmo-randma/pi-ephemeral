@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -327,7 +327,7 @@ describe("CLI", () => {
     expect(enabled.stdout).toMatch(/Reload recommended/);
     await expect(readFile(join(ctx.agentDir, "skills", "brainstorming", "SKILL.md"), "utf8")).resolves.toContain("Brainstorming");
 
-    const repaired = await invoke(["repair", "skill", "brainstorming", "--global", "--json", ...base]);
+    const repaired = await invoke(["repair", "--json", ...base]);
     expect(repaired.exitCode).toBe(0);
     expect(JSON.parse(repaired.stdout)).toMatchObject({ command: "repair", plan: { ok: true }, applied: { applied: [] } });
 
@@ -344,48 +344,17 @@ describe("CLI", () => {
     expect(result.stderr).toContain(join(ctx.agentDir, "pi-ephemeral-global.json"));
   });
 
-  it("scopes repair --global without reading malformed indexed project state and reports activation evidence", async () => {
+  it("rejects old repair scope and target forms", async () => {
     const ctx = await fixture();
     const base = ["--package", ctx.packageRoot, "--agent-dir", ctx.agentDir, "--cwd", ctx.projectRoot];
-    await expect(invoke(["enable", "skill", "brainstorming", "--global", ...base])).resolves.toMatchObject({ exitCode: 0 });
-    await mkdir(join(ctx.projectRoot, ".pi"), { recursive: true });
-    await writeFile(join(ctx.projectRoot, ".pi", "pi-ephemeral.json"), "{ nope");
-    await writeFile(join(ctx.agentDir, "pi-ephemeral-projects.json"), JSON.stringify({ version: 1, projects: [ctx.projectRoot] }, null, 2) + "\n");
 
-    const result = await invoke(["repair", "--global", "--json", ...base]);
-    expect(result.exitCode).toBe(0);
-    const output = JSON.parse(result.stdout);
-    expect(output.plan).toMatchObject({ ok: true, scope: "global", changes: [] });
-    expect(output.plan.activations).toEqual([
-      {
-        scope: "global",
-        statePath: join(ctx.agentDir, "pi-ephemeral-global.json"),
-        activations: [{ type: "skill", name: "brainstorming", target: "skills/brainstorming" }],
-      },
-    ]);
+    await expect(invoke(["repair", "--global", ...base])).resolves.toMatchObject({ exitCode: 2, stderr: expect.stringMatching(/repair does not accept scope flags/i) });
+    await expect(invoke(["repair", "--project", ...base])).resolves.toMatchObject({ exitCode: 2, stderr: expect.stringMatching(/repair does not accept scope flags/i) });
+    await expect(invoke(["repair", "--all", ...base])).resolves.toMatchObject({ exitCode: 2, stderr: expect.stringMatching(/repair does not accept --all/i) });
+    await expect(invoke(["repair", "skill", "brainstorming", ...base])).resolves.toMatchObject({ exitCode: 2, stderr: expect.stringMatching(/repair does not accept resource arguments/i) });
   });
 
-  it("scopes repair --project without reading unrelated malformed global state", async () => {
-    const ctx = await fixture();
-    const base = ["--package", ctx.packageRoot, "--agent-dir", ctx.agentDir, "--cwd", ctx.projectRoot];
-    await expect(invoke(["enable", "skill", "brainstorming", "--project", ...base])).resolves.toMatchObject({ exitCode: 0 });
-    await writeFile(join(ctx.agentDir, "pi-ephemeral-global.json"), "{ nope");
-
-    const result = await invoke(["repair", "--project", "--json", ...base]);
-    expect(result.exitCode).toBe(0);
-    const output = JSON.parse(result.stdout);
-    expect(output.plan).toMatchObject({ ok: true, scope: "project", changes: [] });
-    expect(output.plan.activations).toEqual([
-      {
-        scope: "project",
-        statePath: join(ctx.projectRoot, ".pi", "pi-ephemeral.json"),
-        projectRoot: ctx.projectRoot,
-        activations: [{ type: "skill", name: "brainstorming", target: ".pi/skills/brainstorming" }],
-      },
-    ]);
-  });
-
-  it("runs default repair against global and current project only", async () => {
+  it("preserves malformed indexed project state errors during comprehensive repair", async () => {
     const ctx = await fixture();
     const project2 = join(ctx.projectRoot, "sibling");
     await mkdir(join(project2, ".pi"), { recursive: true });
@@ -395,32 +364,45 @@ describe("CLI", () => {
     await writeFile(join(ctx.agentDir, "pi-ephemeral-projects.json"), JSON.stringify({ version: 1, projects: [ctx.projectRoot, project2] }, null, 2) + "\n");
 
     const result = await invoke(["repair", "--json", ...base]);
-    expect(result.exitCode).toBe(0);
-    const output = JSON.parse(result.stdout);
-    expect(output.plan).toMatchObject({ ok: true, scope: "mixed" });
-    expect(output.plan.activations).toEqual([
-      {
-        scope: "global",
-        statePath: join(ctx.agentDir, "pi-ephemeral-global.json"),
-        activations: [],
-      },
-      {
-        scope: "project",
-        statePath: join(ctx.projectRoot, ".pi", "pi-ephemeral.json"),
-        projectRoot: ctx.projectRoot,
-        activations: [{ type: "skill", name: "brainstorming", target: ".pi/skills/brainstorming" }],
-      },
-    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(join(project2, ".pi", "pi-ephemeral.json"));
   });
 
-  it("runs targeted repair --all against indexed projects", async () => {
+  it("preserves malformed current unindexed project state errors during comprehensive repair", async () => {
+    const ctx = await fixture();
+    await mkdir(join(ctx.projectRoot, ".pi"), { recursive: true });
+    const statePath = join(ctx.projectRoot, ".pi", "pi-ephemeral.json");
+    const base = ["--package", ctx.packageRoot, "--agent-dir", ctx.agentDir, "--cwd", ctx.projectRoot];
+    await writeFile(statePath, "{ nope");
+
+    const result = await invoke(["repair", "--json", ...base]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(statePath);
+  });
+
+  it("prints comprehensive repair details in human output", async () => {
+    const ctx = await fixture();
+    const missing = join(ctx.projectRoot, "missing");
+    const base = ["--package", ctx.packageRoot, "--agent-dir", ctx.agentDir, "--cwd", ctx.projectRoot];
+    await expect(invoke(["enable", "skill", "brainstorming", "--project", ...base])).resolves.toMatchObject({ exitCode: 0 });
+    await rm(join(ctx.projectRoot, ".pi", "skills", "brainstorming"), { recursive: true, force: true });
+    await writeFile(join(ctx.agentDir, "pi-ephemeral-projects.json"), JSON.stringify({ version: 1, projects: [ctx.projectRoot, missing] }, null, 2) + "\n");
+
+    const result = await invoke(["repair", ...base]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Plan OK");
+    expect(result.stdout).toContain("create_symlink: Create symlink");
+    expect(result.stdout).toContain("write_project_index: Prune stale project index entries");
+  });
+
+  it("runs comprehensive repair against indexed projects", async () => {
     const ctx = await fixture();
     const project2 = join(ctx.projectRoot, "sibling");
     await mkdir(project2, { recursive: true });
     const base = ["--package", ctx.packageRoot, "--agent-dir", ctx.agentDir];
     await expect(invoke(["enable", "skill", "brainstorming", "--project", "--cwd", project2, ...base])).resolves.toMatchObject({ exitCode: 0 });
 
-    const result = await invoke(["repair", "skill", "brainstorming", "--all", "--json", "--cwd", ctx.projectRoot, ...base]);
+    const result = await invoke(["repair", "--json", "--cwd", ctx.projectRoot, ...base]);
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.stdout);
     expect(output.plan).toMatchObject({ ok: true, scope: "mixed" });
