@@ -31,6 +31,8 @@ Catalog records use:
 
 Required fields are `type`, `name`, and `path`. `description`, `bundle`, and `infra` are optional. Catalogs must not define a `target` field; target paths are derived from resource type and source path.
 
+An `extension` source may be a `.ts`/`.js` file, an index-based directory, or a native package directory whose `package.json#pi.extensions` has at least one declared entry that exists. Missing or unusable sibling declarations do not reject an otherwise usable package. Activation always links the complete source directory at the normal derived extension target; it does not create links for individual manifest entries or contained resources.
+
 ## Activation scopes
 
 Resources can be active through three scopes:
@@ -51,6 +53,7 @@ Bundle behavior:
 - Detail views show bundle child resources.
 - Bundle enable/disable actions cascade to editable children.
 - Detail mode allows individual child toggles.
+- A one-extension bundle backed by a native package directory remains atomic: only its bundle and extension rows are actionable. Statically discoverable contained skills, prompts, and themes belong to that package extension; they are informational rows, not synthetic children or activation records.
 - Partial bundle state uses `*`, for example `global*` or `project*`.
 - Bundle rows warn when child activations mix global and project scopes.
 
@@ -125,7 +128,8 @@ TUI behavior:
 - Shows a bundle-aware resource table.
 - Default mode shows root rows only.
 - Detail mode (`d`) reveals child resources.
-- Search (`/`) filters resources using the shared resource-search model and reveals matching bundled children even when detail mode is off.
+- Detail mode shows statically discoverable resources contained by an atomic native package as muted in-table rows beneath the package bundle. Their `Use` and `Action` cells are blank and the rows are read-only; toggling remains on the owning package bundle or extension.
+- Search (`/`) filters resources using the shared resource-search model and reveals matching bundled or contained rows beneath the necessary parent bundle even when detail mode is off. A package bundle filtered by a contained-row match still toggles its atomic extension.
 - Backspace-to-empty exits search mode so navigation resumes.
 - Real keyboard handling supports `j/k`, arrow keys, printable Kitty CSI-u input, and Esc close/cancel.
 - TUI table alignment keeps title/status/header/content columns semantically aligned while accounting for the SelectList selector gutter; child indentation appears only inside the `Type` cell.

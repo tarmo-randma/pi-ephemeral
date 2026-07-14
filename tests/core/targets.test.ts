@@ -40,6 +40,44 @@ describe("deriveTargetPath", () => {
     await expectTarget(root, { type: "extension", name: "direct-name", path: "ephemeral/extensions/direct.js" }, "extensions/direct.js");
   });
 
+  it("accepts an extension package directory when at least one declared entry exists", async () => {
+    const root = await tempRoot();
+    const packageRoot = join(root, "node_modules", "example-native-package");
+    await mkdir(join(packageRoot, "dist"), { recursive: true });
+    await writeFile(join(packageRoot, "dist", "extension.js"), "export default () => {};\n");
+    await writeFile(join(packageRoot, "package.json"), JSON.stringify({
+      name: "example-native-package",
+      version: "1.2.3",
+      pi: {
+        extensions: ["./dist/extension.js", "./dist/missing.js"],
+        skills: ["./skills"],
+      },
+    }));
+
+    const record: ResourceRecord = {
+      type: "extension",
+      name: "example-native-package",
+      path: "node_modules/example-native-package",
+      bundle: "example-native-package",
+    };
+
+    await expectTarget(root, record, "extensions/example-native-package");
+  });
+
+  it("rejects a package manifest with no existing extension entry and preserves index fallback", async () => {
+    const root = await tempRoot();
+    const rejected = join(root, "node_modules", "rejected-package");
+    await mkdir(rejected, { recursive: true });
+    await writeFile(join(rejected, "package.json"), JSON.stringify({ pi: { extensions: ["./missing.js", 12] } }));
+    await expect(deriveTargetPath(root, { type: "extension", name: "rejected", path: "node_modules/rejected-package" })).rejects.toMatchObject({ code: "invalid_source_shape" });
+
+    const fallback = join(root, "node_modules", "fallback-package");
+    await mkdir(fallback, { recursive: true });
+    await writeFile(join(fallback, "package.json"), "not json");
+    await writeFile(join(fallback, "index.js"), "export default () => {};\n");
+    await expectTarget(root, { type: "extension", name: "fallback", path: "node_modules/fallback-package" }, "extensions/fallback-package");
+  });
+
   it("maps prompts and themes from filenames", async () => {
     const root = await tempRoot();
     await mkdir(join(root, "ephemeral", "prompts"), { recursive: true });

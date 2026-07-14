@@ -2,6 +2,7 @@ import { stat, access } from "node:fs/promises";
 import path from "node:path";
 import { constants } from "node:fs";
 import { CatalogValidationError } from "./errors.js";
+import { inspectExtensionPackageDirectory } from "./extension-package.js";
 import { basenameWithoutTrailingSlash, resolveCatalogPath, validateCatalogPath } from "./paths.js";
 import type { CatalogProblem, ResourceRecord } from "./types.js";
 
@@ -52,13 +53,14 @@ export async function deriveTargetPath(root: string, record: ResourceRecord): Pr
 
   if (record.type === "extension") {
     if (sourceStat.isDirectory()) {
+      if (await inspectExtensionPackageDirectory(sourcePath)) return `extensions/${sourceBasename}`;
       if ((await exists(path.join(sourcePath, "index.ts"))) || (await exists(path.join(sourcePath, "index.js")))) {
         return `extensions/${sourceBasename}`;
       }
-      throw invalidSource(record, "Extension directories must contain index.ts or index.js");
+      throw invalidSource(record, "Extension directories must contain a usable package.json#pi.extensions entry or index.ts/index.js");
     }
     if (sourceStat.isFile() && (ext === ".ts" || ext === ".js")) return `extensions/${sourceBasename}`;
-    throw invalidSource(record, "Extension sources must be a .ts/.js file or a directory containing index.ts/index.js");
+    throw invalidSource(record, "Extension sources must be a .ts/.js file or a directory containing a usable package.json#pi.extensions entry or index.ts/index.js");
   }
 
   if (record.type === "prompt") {

@@ -55,6 +55,12 @@ function resourceForNode(node: BundleDisplayNode): ResourceDisplayRow | undefine
   return node.resource;
 }
 
+function containedResourceMatchesQuery(node: BundleDisplayNode, query: string): boolean {
+  const candidate = node.containedResource;
+  if (!candidate) return false;
+  return includesQuery(candidate.type, query) || includesQuery(candidate.name, query) || includesQuery(candidate.path, query) || includesQuery(node.id, query);
+}
+
 export function filterBundleDisplayTreeByQuery(tree: BundleDisplayNode[], query: string, options: FilterBundleDisplayTreeOptions): BundleDisplayNode[] {
   const normalizedQuery = normalizeResourceQuery(query);
   if (!normalizedQuery) return [...tree];
@@ -77,11 +83,16 @@ export function filterBundleDisplayTreeByQuery(tree: BundleDisplayNode[], query:
 
     const matchingChildren = children.filter((child) => {
       const resource = resourceForNode(child);
-      return resource ? resourceMatchesQuery(resource, normalizedQuery, { bundleName: node.name, includeBundleName: options.includeBundleNameForChildren }) : false;
+      if (resource) return resourceMatchesQuery(resource, normalizedQuery, { bundleName: node.name, includeBundleName: options.includeBundleNameForChildren });
+      return containedResourceMatchesQuery(child, normalizedQuery);
     });
 
     if (bundleMatches || matchingChildren.length > 0) {
-      filtered.push(cloneBundleWithChildren(node, matchingChildren, matchingChildren.flatMap((child) => (child.resource ? [child.resource] : []))));
+      const matchingResources = matchingChildren.flatMap((child) => (child.resource ? [child.resource] : []));
+      const childResources = matchingChildren.some((child) => child.containedResource)
+        ? [...(node.childResources ?? [])]
+        : matchingResources;
+      filtered.push(cloneBundleWithChildren(node, matchingChildren, childResources));
     }
   }
 

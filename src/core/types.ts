@@ -26,12 +26,26 @@ export interface CatalogProblem {
   path?: string;
 }
 
+export type ContainedResourceType = "skill" | "prompt" | "theme";
+
+export interface ContainedResourceCandidate {
+  type: ContainedResourceType;
+  name: string;
+  path: string;
+}
+
+export interface ExtensionPackageDirectoryInfo {
+  extensionEntries: string[];
+  containedResources: ContainedResourceCandidate[];
+}
+
 export interface LoadedResource {
   record: ResourceRecord;
   scope: CatalogScope;
   identity: string;
   catalogPath: string;
   targetPath?: string;
+  extensionPackage?: ExtensionPackageDirectoryInfo;
 }
 
 export interface CatalogSet {

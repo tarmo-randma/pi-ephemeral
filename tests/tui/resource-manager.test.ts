@@ -52,6 +52,30 @@ async function context() {
   return { root, agentDir, projectRoot, packageRoot };
 }
 
+async function addAtomicPackage(packageRoot: string): Promise<void> {
+  const name = "example-native-package";
+  const source = join(packageRoot, "node_modules", name);
+  await mkdir(join(source, "dist"), { recursive: true });
+  await writeFile(join(source, "dist", "extension.js"), "export default () => {};\n");
+  await mkdir(join(source, "skills", "brainstorming"), { recursive: true });
+  await writeFile(join(source, "skills", "brainstorming", "SKILL.md"), "# brainstorming\n");
+  await mkdir(join(source, "prompts"));
+  await writeFile(join(source, "prompts", "review.md"), "Review\n");
+  await writeFile(join(source, "package.json"), JSON.stringify({
+    name,
+    pi: {
+      extensions: ["./dist/extension.js"],
+      skills: ["./skills"],
+      prompts: ["./prompts"],
+    },
+  }));
+
+  const catalogPath = join(packageRoot, "ephemeral", "resources.json");
+  const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as { version: 1; resources: unknown[] };
+  catalog.resources.push({ type: "extension", name, path: `node_modules/${name}`, bundle: name, description: "atomic native package" });
+  await writeFile(catalogPath, JSON.stringify(catalog));
+}
+
 async function readState(path: string): Promise<ActivationState> {
   return JSON.parse(await readFile(path, "utf8")) as ActivationState;
 }
@@ -137,6 +161,52 @@ describe("resource manager view model", () => {
     expect(details.rows.find((row) => row.identity === "skill:librarian")).toMatchObject({ depth: 1, action: "disable", use: "project" });
   });
 
+  it("places native package contents beneath their bundle only in detail mode", async () => {
+    const ctx = await context();
+    await addAtomicPackage(ctx.packageRoot);
+    const catalog = await loadCatalogSet(ctx.packageRoot);
+    const state = { version: 1 as const, activations: [] };
+
+    const roots = buildResourceManagerViewModel({ catalog, globalState: state, projectState: state, selectedScope: "project", details: false, pending: [] });
+    expect(roots.rows.map((row) => row.identity)).toContain("bundle:example-native-package");
+    expect(roots.rows.some((row) => row.kind === "contained-resource")).toBe(false);
+
+    const details = buildResourceManagerViewModel({ catalog, globalState: state, projectState: state, selectedScope: "project", details: true, pending: [] });
+    const packageStart = details.rows.findIndex((row) => row.identity === "bundle:example-native-package");
+    expect(details.rows.slice(packageStart, packageStart + 4).map((row) => row.identity)).toEqual([
+      "bundle:example-native-package",
+      "extension:example-native-package",
+      "contained:example-native-package:skill:skills/brainstorming",
+      "contained:example-native-package:prompt:prompts/review.md",
+    ]);
+    expect(details.rows.slice(packageStart + 2, packageStart + 4)).toEqual([
+      expect.objectContaining({ kind: "contained-resource", depth: 1, type: "skill", name: "brainstorming", use: "", action: "", pending: false, editable: false, readOnly: true, muted: true }),
+      expect.objectContaining({ kind: "contained-resource", depth: 1, type: "prompt", name: "review", use: "", action: "", pending: false, editable: false, readOnly: true, muted: true }),
+    ]);
+
+    const bundle = details.rows[packageStart];
+    expect(bundle).toMatchObject({ action: "enable", muted: false });
+    expect(bundle?.childResources).toEqual([
+      { type: "extension", name: "example-native-package", identity: "extension:example-native-package", action: "enable" },
+    ]);
+  });
+
+  it("finds native package contents through the same hierarchical search", async () => {
+    const ctx = await context();
+    await addAtomicPackage(ctx.packageRoot);
+    const catalog = await loadCatalogSet(ctx.packageRoot);
+    const state = { version: 1 as const, activations: [] };
+
+    const vm = buildResourceManagerViewModel({ catalog, globalState: state, projectState: state, selectedScope: "project", details: false, pending: [], search: "brainstorming" });
+    expect(vm.rows.map((row) => row.identity)).toEqual([
+      "bundle:example-native-package",
+      "contained:example-native-package:skill:skills/brainstorming",
+    ]);
+    expect(vm.rows[0]?.childResources).toEqual([
+      { type: "extension", name: "example-native-package", identity: "extension:example-native-package", action: "enable" },
+    ]);
+  });
+
   it("shows pending global promotion side effects before apply", async () => {
     const ctx = await context();
     const catalog = await loadCatalogSet(ctx.packageRoot);
@@ -166,6 +236,88 @@ describe("resource manager view model", () => {
 });
 
 describe("resource manager component", () => {
+  it("renders native package contents as muted aligned rows with no bottom information block", async () => {
+    const ctx = await context();
+    await addAtomicPackage(ctx.packageRoot);
+    const mutedLabels: string[] = [];
+    const theme = {
+      fg: (name: string, text: string) => {
+        if (name === "muted") mutedLabels.push(text);
+        return text;
+      },
+      bold: (text: string) => text,
+    } as never;
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme, keybindings: getKeybindings() });
+
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("example-native-package"));
+    let output = component.render(100).join("\n");
+    expect(output).not.toContain("brainstorming");
+    expect(output).not.toContain("review");
+
+    component.handleInput("d");
+    output = component.render(100).join("\n");
+    const header = stripAnsi(lineContaining(output, "Pending"));
+    const skillLine = tableItemLine(output, "brainstorming");
+    const promptLine = tableItemLine(output, "review");
+    expect(semanticTokenIndex(skillLine, "skill")).toBe(semanticTokenIndex(header, "Type") + 2);
+    expect(semanticTokenIndex(skillLine, "brainstorming")).toBe(semanticTokenIndex(header, "Name"));
+    expect(semanticTokenIndex(promptLine, "review")).toBe(semanticTokenIndex(header, "Name"));
+    expect(stripAnsi(skillLine).trimEnd()).toMatch(/brainstorming$/);
+    expect(stripAnsi(promptLine).trimEnd()).toMatch(/review$/);
+    expect(mutedLabels.some((label) => label.includes("brainstorming"))).toBe(true);
+    expect(mutedLabels.some((label) => label.includes("review"))).toBe(true);
+    expect(output).not.toContain("Contained resource candidates");
+    expect(output).not.toContain("Actual or additional resources may be discovered at runtime.");
+  });
+
+  it("toggles the package extension from a contained-resource search result", async () => {
+    const ctx = await context();
+    await addAtomicPackage(ctx.packageRoot);
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
+
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("example-native-package"));
+    component.handleInput("/");
+    for (const char of "brainstorming") component.handleInput(char);
+    component.handleInput("\r");
+
+    let output = component.render(100).join("\n");
+    expect(tableItemLine(output, "brainstorming")).not.toBe("");
+    expect(tableItemLine(output, "example-native-package")).not.toBe("");
+    expect(output).not.toMatch(/\s{2}extension\s+example-native-package/);
+
+    component.handleInput(" ");
+    await waitForExpectation(() => {
+      output = component.render(100).join("\n");
+      expect(output).toContain("extension:example-native-package");
+    });
+    expect((component as unknown as { pending: PendingResourceToggle[] }).pending).toEqual([
+      { type: "extension", name: "example-native-package", scope: "project", enabled: true },
+    ]);
+  });
+
+  it("keeps contained rows read-only and bundle toggles atomic", async () => {
+    const ctx = await context();
+    await addAtomicPackage(ctx.packageRoot);
+    const notify = vi.fn();
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify, requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
+
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("example-native-package"));
+    component.handleInput("d");
+    component.handleInput("j");
+    component.handleInput("j");
+    component.handleInput(" ");
+
+    expect(notify).toHaveBeenCalledWith("skill:brainstorming is part of extension package example-native-package and is read-only; toggle the package extension instead.", "warning");
+    expect(component.render(100).join("\n")).toContain("No pending changes.");
+
+    component.handleInput("d");
+    component.handleInput(" ");
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("extension:example-native-package"));
+    const output = component.render(100).join("\n");
+    expect(output).not.toContain("skill:brainstorming");
+    expect(output).not.toContain("prompt:review");
+  });
+
   it("defaults to root rows only and toggles detail mode with aligned hierarchy columns", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });

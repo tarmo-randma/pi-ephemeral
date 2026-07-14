@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyPlan } from "../../src/core/apply.js";
@@ -31,6 +31,14 @@ async function extension(root: string, fileName: string): Promise<string> {
   return `ephemeral/extensions/${fileName}`;
 }
 
+async function extensionPackage(root: string, name: string): Promise<{ catalogPath: string; packagePath: string }> {
+  const packagePath = join(root, "node_modules", name);
+  await mkdir(join(packagePath, "dist"), { recursive: true });
+  await writeFile(join(packagePath, "dist", "extension.js"), "export default () => {};\n");
+  await writeFile(join(packagePath, "package.json"), JSON.stringify({ name, pi: { extensions: ["./dist/extension.js"] } }));
+  return { catalogPath: `node_modules/${name}`, packagePath };
+}
+
 async function context() {
   const root = await tempDir();
   const agentDir = join(root, "agent");
@@ -53,6 +61,22 @@ describe("planner/apply", () => {
     expect(result.applied.map((c) => c.action)).toEqual(plan.changes.map((c) => c.action));
     expect(await readFile(join(ctx.agentDir, "skills", "brainstorming", "SKILL.md"), "utf8")).toContain("skill");
     await expect(readActivationState(join(ctx.agentDir, "pi-ephemeral-global.json"))).resolves.toEqual({ version: 1, activations: [{ type: "skill", name: "brainstorming", target: "skills/brainstorming" }] });
+  });
+
+  it.each(["global", "project"] as const)("links the complete eligible extension package root in %s scope", async (scope) => {
+    const ctx = await context();
+    const source = await extensionPackage(ctx.packageRoot, "example-native-package");
+    await writeCatalog(ctx.packageRoot, [{ type: "extension", name: "example-native-package", path: source.catalogPath }]);
+
+    const plan = await planEnable({ ...ctx, scope, type: "extension", name: "example-native-package" });
+    expect(plan.ok).toBe(true);
+    await applyPlan(plan);
+
+    const target = scope === "global"
+      ? join(ctx.agentDir, "extensions", "example-native-package")
+      : join(ctx.projectRoot, ".pi", "extensions", "example-native-package");
+    await expect(realpath(target)).resolves.toBe(await realpath(source.packagePath));
+    await expect(readFile(join(target, "package.json"), "utf8")).resolves.toContain("./dist/extension.js");
   });
 
   it("disables an activation whose catalog resource was removed", async () => {

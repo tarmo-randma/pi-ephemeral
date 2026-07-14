@@ -32,7 +32,7 @@ export interface ResourceManagerViewModelInput {
 
 export interface ResourceManagerRow {
   identity: string;
-  kind: "bundle" | "resource";
+  kind: "bundle" | "resource" | "contained-resource";
   depth: 0 | 1;
   type: RootDisplayType;
   name: string;
@@ -50,6 +50,7 @@ export interface ResourceManagerRow {
   pending: boolean;
   pendingEnabled?: boolean;
   warnings: string[];
+  muted: boolean;
   childResources?: { type: ResourceType; name: string; identity: string; action: BundleAction }[];
 }
 
@@ -173,15 +174,18 @@ export function buildResourceManagerViewModel(input: ResourceManagerViewModelInp
 
   const rows = flattenBundleDisplayTree(tree, { details: input.details || searchActive }).map((node): ResourceManagerRow => {
     const resource = node.resource ? resourceByIdentity.get(node.resource.identity) : undefined;
+    const containedResource = node.containedResource;
     const id = node.id;
     const selectedToggle = resource ? pending.get(`${input.selectedScope}:${id}`) : undefined;
     const effective = resource ? (effectiveByIdentity.get(id) ?? { global: false, project: false }) : { global: node.use.startsWith("global"), project: node.use.startsWith("project") };
     const alwaysOn = resource?.scope === "always-on" || node.use.startsWith("always");
-    const readOnlyReason = resource && node.action === "" && alwaysOn
-      ? "Resource is always-on and cannot be changed here."
-      : resource && node.action === "" && input.selectedScope === "project" && effective.global && !effective.project
-        ? "Resource is globally enabled; disable it globally to manage project state."
-        : undefined;
+    const readOnlyReason = containedResource
+      ? `${containedResource.type}:${containedResource.name} is part of extension package ${node.containedIn ?? ""} and is read-only; toggle the package extension instead.`
+      : resource && node.action === "" && alwaysOn
+        ? "Resource is always-on and cannot be changed here."
+        : resource && node.action === "" && input.selectedScope === "project" && effective.global && !effective.project
+          ? "Resource is globally enabled; disable it globally to manage project state."
+          : undefined;
     const usageCount = resource ? (alwaysOn ? 1 : 0) + (effective.global && !alwaysOn ? 1 : 0) + (effective.project ? 1 : 0) : (node.use ? 1 : 0);
     const active = input.selectedScope === "global" ? effective.global : effective.global || effective.project || node.use !== "";
     return {
@@ -204,6 +208,7 @@ export function buildResourceManagerViewModel(input: ResourceManagerViewModelInp
       pending: Boolean(selectedToggle),
       ...(selectedToggle ? { pendingEnabled: selectedToggle.enabled } : {}),
       warnings: node.warnings,
+      muted: node.kind === "contained-resource",
       ...(node.childResources ? { childResources: node.childResources.map((child) => ({ type: child.type, name: child.name, identity: child.identity, action: child.action })) } : {}),
     };
   });
@@ -326,10 +331,10 @@ export class ResourceManagerComponent implements Component {
       if (vm) {
         const rowWidths = tuiRowWidths(width);
         this.container.addChild(new Text(tableRow(["Use", "Type", "Name", "Action", "Pending"], rowWidths), CONTENT_START_COLUMN, 0));
-        const items: SelectItem[] = vm.rows.map((row) => ({
-          value: row.identity,
-          label: tableRow([row.use, `${row.depth === 1 ? "  " : ""}${row.type}`, row.name, row.action, row.pending ? (row.pendingEnabled ? "enable" : "disable") : ""], rowWidths),
-        }));
+        const items: SelectItem[] = vm.rows.map((row) => {
+          const label = tableRow([row.use, `${row.depth === 1 ? "  " : ""}${row.type}`, row.name, row.action, row.pending ? (row.pendingEnabled ? "enable" : "disable") : ""], rowWidths);
+          return { value: row.identity, label: row.muted ? muted(label) : label };
+        });
         const maxVisibleRows = this.details ? 28 : 20;
         const list = new SelectList(items, Math.min(Math.max(items.length, 1), maxVisibleRows), getSelectListTheme());
         if (items.length > 0) {

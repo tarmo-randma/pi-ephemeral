@@ -1,6 +1,6 @@
 import type { ActivationRecord } from "./state.js";
 import { activationIdentity } from "./state.js";
-import type { LoadedResource, ResourceType } from "./types.js";
+import type { ExtensionPackageDirectoryInfo, LoadedResource, ResourceType } from "./types.js";
 
 export const RESOURCE_TYPE_DISPLAY_ORDER: readonly ResourceType[] = ["extension", "skill", "prompt", "theme"] as const;
 export type ResourceUse = "" | "always" | "global" | "project";
@@ -16,6 +16,7 @@ export interface ResourceDisplayRow {
   source: string;
   target: string;
   description?: string;
+  extensionPackage?: ExtensionPackageDirectoryInfo;
   warnings: string[];
 }
 
@@ -69,6 +70,7 @@ export function buildResourceDisplayRows(options: BuildResourceDisplayRowsOption
         source: resource.record.path,
         target: resource.targetPath ?? "",
         ...(resource.record.description ? { description: resource.record.description } : {}),
+        ...(resource.extensionPackage ? { extensionPackage: resource.extensionPackage } : {}),
         warnings,
       } satisfies ResourceDisplayRow;
     })

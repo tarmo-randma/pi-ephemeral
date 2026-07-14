@@ -1,10 +1,10 @@
 import { buildResourceDisplayRows, compareResourceDisplayRows, type ResourceDisplayRow } from "./resource-display.js";
 import type { ActivationRecord } from "./state.js";
-import type { LoadedResource, ResourceType } from "./types.js";
+import type { ContainedResourceCandidate, ExtensionPackageDirectoryInfo, LoadedResource, ResourceType } from "./types.js";
 
 export const ROOT_TYPE_DISPLAY_ORDER = ["bundle", "extension", "skill", "prompt", "theme"] as const;
 export type RootDisplayType = (typeof ROOT_TYPE_DISPLAY_ORDER)[number];
-export type BundleNodeKind = "bundle" | "resource";
+export type BundleNodeKind = "bundle" | "resource" | "contained-resource";
 export type BundleUse = "" | "always" | "global" | "project" | "always*" | "global*" | "project*";
 export type BundleAction = "" | "enable" | "disable";
 
@@ -27,6 +27,9 @@ export interface BundleDisplayNode {
   children?: BundleDisplayNode[];
   resource?: ResourceDisplayRow;
   childResources?: ResourceDisplayRow[];
+  extensionPackage?: ExtensionPackageDirectoryInfo;
+  containedResource?: ContainedResourceCandidate;
+  containedIn?: string;
   warnings: string[];
 }
 
@@ -50,7 +53,23 @@ function resourceNode(row: ResourceDisplayRow, depth: 0 | 1): BundleDisplayNode 
     use: row.use,
     action: row.action,
     resource: row,
+    ...(row.extensionPackage ? { extensionPackage: row.extensionPackage } : {}),
     warnings: row.warnings,
+  };
+}
+
+function containedResourceNode(bundleName: string, candidate: ContainedResourceCandidate): BundleDisplayNode {
+  return {
+    id: `contained:${bundleName}:${candidate.type}:${candidate.path}`,
+    kind: "contained-resource",
+    depth: 1,
+    type: candidate.type,
+    name: candidate.name,
+    use: "",
+    action: "",
+    containedResource: candidate,
+    containedIn: bundleName,
+    warnings: [],
   };
 }
 
@@ -93,6 +112,9 @@ function bundleWarnings(bundleName: string, children: ResourceDisplayRow[]): str
 
 function bundleNode(bundleName: string, rows: ResourceDisplayRow[], context: "global" | "project"): BundleDisplayNode {
   const childResources = [...rows].sort(compareResourceDisplayRows);
+  const atomicExtensionPackage = childResources.length === 1 && childResources[0]?.type === "extension"
+    ? childResources[0].extensionPackage
+    : undefined;
   return {
     id: `bundle:${bundleName}`,
     kind: "bundle",
@@ -101,8 +123,12 @@ function bundleNode(bundleName: string, rows: ResourceDisplayRow[], context: "gl
     name: bundleName,
     use: deriveBundleUse(childResources, context),
     action: deriveBundleAction(childResources),
-    children: childResources.map((row) => resourceNode(row, 1)),
+    children: [
+      ...childResources.map((row) => resourceNode(row, 1)),
+      ...(atomicExtensionPackage?.containedResources.map((candidate) => containedResourceNode(bundleName, candidate)) ?? []),
+    ],
     childResources,
+    ...(atomicExtensionPackage ? { extensionPackage: atomicExtensionPackage } : {}),
     warnings: bundleWarnings(bundleName, childResources),
   };
 }

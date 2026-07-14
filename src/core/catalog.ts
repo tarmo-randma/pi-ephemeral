@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { errorProblem, warningProblem } from "./errors.js";
-import { validateCatalogPath } from "./paths.js";
+import { inspectExtensionPackageDirectory } from "./extension-package.js";
+import { resolveCatalogPath, validateCatalogPath } from "./paths.js";
 import { deriveTargetPath, targetErrorToProblem } from "./targets.js";
 import { RESOURCE_TYPES, type CatalogProblem, type CatalogScope, type CatalogSet, type LoadedResource, type ResourceCatalogFile, type ResourceRecord, type ResourceType } from "./types.js";
 
@@ -182,6 +183,10 @@ export async function loadCatalogSet(root: string): Promise<CatalogSet> {
     if (hasPathProblem) continue;
     try {
       resource.targetPath = await deriveTargetPath(root, resource.record);
+      if (resource.record.type === "extension") {
+        const extensionPackage = await inspectExtensionPackageDirectory(resolveCatalogPath(root, resource.record.path));
+        if (extensionPackage) resource.extensionPackage = extensionPackage;
+      }
     } catch (error) {
       const problem = targetErrorToProblem(error);
       if (problem) problems.push(problem);
