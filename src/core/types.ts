@@ -53,4 +53,5 @@ export interface CatalogSet {
   ephemeral: LoadedResource[];
   resources: LoadedResource[];
   problems: CatalogProblem[];
+  ephemeralCatalogHealthy: boolean;
 }

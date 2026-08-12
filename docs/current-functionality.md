@@ -103,7 +103,7 @@ Enables or disables one optional resource in the selected scope. Default scope i
 pi-ephemeral repair [--json] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
 ```
 
-Repairs active resources everywhere relevant: global activations, indexed projects, and the current project when it has `.pi/pi-ephemeral.json` with activations. It updates symlinks for activations found in the catalog, reports skipped missing catalog entries without removing those activations, prunes stale or empty project index entries, and does not enable inactive resources or upgrade packages.
+Repairs active resources everywhere relevant: global activations, indexed projects, and the current project when it has `.pi/pi-ephemeral.json` with activations. It updates symlinks for activations found in the catalog. When the optional catalog was successfully read and is valid, repair removes global and project activation entries and their managed symlinks for identities no longer catalogued. If the optional catalog is missing, unreadable, malformed, or invalid, repair conservatively retains missing identities and reports them as skipped. Repair also prunes stale or empty project index entries, and does not enable inactive resources or upgrade packages.
 
 ### Global config package root
 

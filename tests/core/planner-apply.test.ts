@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyPlan } from "../../src/core/apply.js";
-import { planDisable, planEnable, planUpdateAll, planUpdateTarget, planUpdateTargetAll } from "../../src/core/planner.js";
+import { planDisable, planEnable, planUpdateAll, planUpdateGlobal, planUpdateTarget, planUpdateTargetAll } from "../../src/core/planner.js";
 import { readActivationState } from "../../src/core/state.js";
 import { loadProjectIndex } from "../../src/core/project-index.js";
 
@@ -253,6 +253,100 @@ describe("planner/apply", () => {
 
     expect((await loadProjectIndex(join(ctx.agentDir, "pi-ephemeral-projects.json"))).projects).toEqual([ctx.projectRoot]);
     await expect(readFile(join(ctx.projectRoot, ".pi", "skills", "current", "SKILL.md"), "utf8")).resolves.toContain("skill");
+  });
+
+  it("startup refresh retains missing activations until explicit repair", async () => {
+    const ctx = await context();
+    await writeCatalog(ctx.packageRoot, [{ type: "skill", name: "removed", path: await skill(ctx.packageRoot, "removed") }]);
+    await applyPlan(await planEnable({ ...ctx, scope: "global", type: "skill", name: "removed" }));
+    await writeCatalog(ctx.packageRoot, []);
+
+    const plan = await planUpdateGlobal(ctx);
+    expect(plan.warnings.some((warning) => warning.code === "skipped_missing_resource")).toBe(true);
+    expect(plan.changes.some((change) => change.action === "remove_symlink")).toBe(false);
+    await applyPlan(plan);
+
+    await expect(readActivationState(join(ctx.agentDir, "pi-ephemeral-global.json"))).resolves.toMatchObject({ activations: [{ name: "removed" }] });
+    await expect(readFile(join(ctx.agentDir, "skills", "removed", "SKILL.md"), "utf8")).resolves.toContain("skill");
+  });
+
+  it("removes stale targets before creating surviving replacement links", async () => {
+    const ctx = await context();
+    await writeCatalog(ctx.packageRoot, [
+      { type: "skill", name: "survivor", path: await skill(ctx.packageRoot, "survivor-old") },
+      { type: "skill", name: "removed", path: await skill(ctx.packageRoot, "shared-target") },
+    ]);
+    await applyPlan(await planEnable({ ...ctx, scope: "global", type: "skill", name: "survivor" }));
+    await applyPlan(await planEnable({ ...ctx, scope: "global", type: "skill", name: "removed" }));
+    await writeCatalog(ctx.packageRoot, [{ type: "skill", name: "survivor", path: await skill(ctx.packageRoot, "shared-target") }]);
+
+    const repairPlan = await planUpdateAll(ctx);
+    const linkChanges = repairPlan.changes.filter((change) => change.action === "remove_symlink" || change.action === "create_symlink" || change.action === "recreate_symlink");
+    expect(linkChanges.map((change) => `${change.action}:${change.path ?? ""}`)).toEqual([
+      `remove_symlink:${join(ctx.agentDir, "skills", "survivor-old")}`,
+    ]);
+    await applyPlan(repairPlan);
+
+    await expect(readActivationState(join(ctx.agentDir, "pi-ephemeral-global.json"))).resolves.toEqual({ version: 1, activations: [{ type: "skill", name: "survivor", target: "skills/shared-target" }] });
+    await expect(readFile(join(ctx.agentDir, "skills", "shared-target", "SKILL.md"), "utf8")).resolves.toContain("skill");
+  });
+
+  it("prunes global and project activations removed from a healthy optional catalog", async () => {
+    const ctx = await context();
+    await writeCatalog(ctx.packageRoot, [{ type: "skill", name: "removed", path: await skill(ctx.packageRoot, "removed") }]);
+    await applyPlan(await planEnable({ ...ctx, scope: "global", type: "skill", name: "removed" }));
+
+    const project2 = join(ctx.root, "project2");
+    await mkdir(project2, { recursive: true });
+    await mkdir(join(project2, ".pi", "skills"), { recursive: true });
+    await symlink(resolve(ctx.packageRoot, "ephemeral/skills/removed"), join(project2, ".pi", "skills", "removed"));
+    await writeFile(join(project2, ".pi", "pi-ephemeral.json"), JSON.stringify({
+      version: 1,
+      activations: [{ type: "skill", name: "removed", target: ".pi/skills/removed" }],
+    }, null, 2) + "\n");
+    await writeFile(join(ctx.agentDir, "pi-ephemeral-projects.json"), JSON.stringify({ version: 1, projects: [project2] }, null, 2) + "\n");
+    await writeCatalog(ctx.packageRoot, []);
+
+    const plan = await planUpdateAll(ctx);
+    expect(plan.ok).toBe(true);
+    expect(plan.warnings.filter((warning) => warning.code === "pruned_missing_resource")).toHaveLength(2);
+    expect(plan.changes.filter((change) => change.action === "remove_symlink").map((change) => change.scope).sort()).toEqual(["global", "project"]);
+    await applyPlan(plan);
+
+    await expect(readActivationState(join(ctx.agentDir, "pi-ephemeral-global.json"))).resolves.toEqual({ version: 1, activations: [] });
+    await expect(readActivationState(join(project2, ".pi", "pi-ephemeral.json"))).resolves.toEqual({ version: 1, activations: [] });
+    await expect(readFile(join(ctx.agentDir, "skills", "removed", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(project2, ".pi", "skills", "removed", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await loadProjectIndex(join(ctx.agentDir, "pi-ephemeral-projects.json"))).projects).toEqual([]);
+  });
+
+  it.each(["missing", "unreadable", "malformed", "invalid"] as const)("retains global and project activations when the optional catalog is %s", async (catalogState) => {
+    const ctx = await context();
+    await writeCatalog(ctx.packageRoot, [
+      { type: "skill", name: "global-retained", path: await skill(ctx.packageRoot, "global-retained") },
+      { type: "skill", name: "project-retained", path: await skill(ctx.packageRoot, "project-retained") },
+    ]);
+    await applyPlan(await planEnable({ ...ctx, scope: "global", type: "skill", name: "global-retained" }));
+    await applyPlan(await planEnable({ ...ctx, scope: "project", type: "skill", name: "project-retained" }));
+
+    const catalogPath = join(ctx.packageRoot, "ephemeral", "resources.json");
+    if (catalogState === "missing") await rm(catalogPath);
+    else if (catalogState === "unreadable") {
+      await rm(catalogPath);
+      await mkdir(catalogPath);
+    } else if (catalogState === "malformed") await writeFile(catalogPath, "{ nope");
+    else await writeFile(catalogPath, JSON.stringify({ version: 1, resources: [{ type: "skill", name: "Bad Name", path: "ephemeral/skills/global-retained" }] }));
+
+    const plan = await planUpdateAll(ctx);
+    expect(plan.ok).toBe(true);
+    expect(plan.warnings.some((warning) => warning.code === "pruned_missing_resource")).toBe(false);
+    expect(plan.warnings.some((warning) => warning.code.startsWith("skipped_"))).toBe(true);
+    await applyPlan(plan);
+
+    await expect(readActivationState(join(ctx.agentDir, "pi-ephemeral-global.json"))).resolves.toMatchObject({ activations: [{ name: "global-retained" }] });
+    await expect(readActivationState(join(ctx.projectRoot, ".pi", "pi-ephemeral.json"))).resolves.toMatchObject({ activations: [{ name: "project-retained" }] });
+    await expect(readFile(join(ctx.agentDir, "skills", "global-retained", "SKILL.md"), "utf8")).resolves.toContain("skill");
+    await expect(readFile(join(ctx.projectRoot, ".pi", "skills", "project-retained", "SKILL.md"), "utf8")).resolves.toContain("skill");
   });
 
   it("prunes stale project index entries during update all", async () => {

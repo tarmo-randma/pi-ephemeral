@@ -156,11 +156,27 @@ describe("loadCatalogSet", () => {
     const missingRoot = await tempRoot();
     const missing = await loadCatalogSet(missingRoot);
     expect(missing.problems.some((p) => p.code === "missing_catalog" && p.path === "resources.json")).toBe(true);
+    expect(missing.ephemeralCatalogHealthy).toBe(false);
 
     const root = await tempRoot();
     await writeJson(join(root, "resources.json"), { version: 1, resources: [] });
     const loaded = await loadCatalogSet(root);
     expect(loaded.problems.some((p) => p.path === "ephemeral/resources.json" && p.code === "missing_catalog")).toBe(false);
+    expect(loaded.ephemeralCatalogHealthy).toBe(false);
     expect(loaded.resources).toEqual([]);
+  });
+
+  it("reports optional catalog health independently from the always-on catalog", async () => {
+    const root = await tempRoot();
+    await writeJson(join(root, "resources.json"), { version: 2, resources: [] });
+    await mkdir(join(root, "ephemeral"));
+    await writeJson(join(root, "ephemeral", "resources.json"), { version: 1, resources: [] });
+
+    const healthy = await loadCatalogSet(root);
+    expect(healthy.ephemeralCatalogHealthy).toBe(true);
+
+    await writeFile(join(root, "ephemeral", "resources.json"), "{ nope");
+    const malformed = await loadCatalogSet(root);
+    expect(malformed.ephemeralCatalogHealthy).toBe(false);
   });
 });

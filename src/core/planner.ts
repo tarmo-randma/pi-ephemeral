@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { loadCatalogSet } from "./catalog.js";
 import { globalStatePath, hasProjectState, loadProjectIndex, projectExists, projectIndexPath, projectStatePath } from "./project-index.js";
 import { activationIdentity, readActivationState, removeActivation, upsertActivation, type ActivationRecord, type ActivationState } from "./state.js";
-import type { CatalogProblem, LoadedResource, ResourceType } from "./types.js";
+import type { CatalogProblem, CatalogSet, LoadedResource, ResourceType } from "./types.js";
 
 export type PlanScope = "global" | "project" | "mixed";
 export type PlanAction =
@@ -111,9 +111,9 @@ async function symlinkChange(action: "create_symlink" | "recreate_symlink", scop
   return { action: current === "missing" ? "create_symlink" : action, scope, path, source: sourceAbs, identity: identityValue, message: `${current === "missing" ? "Create" : "Recreate"} symlink ${path}` };
 }
 
-async function findResource(ctx: PlannerContext, type: ResourceType, name: string): Promise<{ resource?: LoadedResource; warnings: PlanMessage[]; errors: PlanMessage[] }> {
+async function findResource(ctx: PlannerContext, type: ResourceType, name: string, loadedCatalog?: CatalogSet): Promise<{ resource?: LoadedResource; warnings: PlanMessage[]; errors: PlanMessage[] }> {
   const requested = identity(type, name);
-  const catalog = await loadCatalogSet(ctx.packageRoot);
+  const catalog = loadedCatalog ?? await loadCatalogSet(ctx.packageRoot);
   const resource = catalog.ephemeral.find((item) => item.identity === requested);
   const target = resource?.targetPath;
   const warnings = catalog.problems.filter((problem) => {
@@ -205,8 +205,18 @@ export async function planDisable(request: ScopedResourceRequest): Promise<Opera
   return plan(request.scope, changes);
 }
 
-async function refreshActivation(ctx: PlannerContext, scope: "global" | "project", activation: ActivationRecord): Promise<{ changes: PlanChange[]; warnings: PlanMessage[]; errors: PlanMessage[]; next?: ActivationRecord }> {
-  const found = await findResource(ctx, activation.type, activation.name);
+async function refreshActivation(ctx: PlannerContext, scope: "global" | "project", activation: ActivationRecord, catalog: CatalogSet, pruneMissing: boolean): Promise<{ changes: PlanChange[]; warnings: PlanMessage[]; errors: PlanMessage[]; next?: ActivationRecord; pruned?: boolean }> {
+  const found = await findResource(ctx, activation.type, activation.name, catalog);
+  if (pruneMissing && !found.resource && catalog.ephemeralCatalogHealthy) {
+    const activationId = activationIdentity(activation);
+    const targetClaimedByCatalog = catalog.ephemeral.some((resource) => resource.targetPath && targetFor(scope, resource.targetPath) === activation.target);
+    return {
+      changes: targetClaimedByCatalog ? [] : [{ action: "remove_symlink", scope, path: join(targetRoot(ctx, scope), activation.target), identity: activationId, message: `Remove symlink for catalog-pruned activation ${activationId}` }],
+      warnings: [...found.warnings, { code: "pruned_missing_resource", message: `Prune activation ${activationId} because it is absent from the valid optional catalog`, identity: activationId }],
+      errors: [],
+      pruned: true,
+    };
+  }
   if (found.errors.length > 0 || !found.resource?.targetPath) return { changes: [], warnings: [...found.warnings, ...found.errors.map((e) => ({ ...e, code: `skipped_${e.code}` }))], errors: [] };
   const expectedTarget = targetFor(scope, found.resource.targetPath);
   const currentTargetAbs = join(targetRoot(ctx, scope), activation.target);
@@ -222,7 +232,7 @@ async function refreshActivation(ctx: PlannerContext, scope: "global" | "project
   return { changes, warnings: found.warnings, errors: [], next: { ...activation, target: expectedTarget } };
 }
 
-async function updateGlobalActivations(ctx: PlannerContext, requested?: { type: ResourceType; name: string }): Promise<{ changes: PlanChange[]; warnings: PlanMessage[]; errors: PlanMessage[]; state: ActivationState; statePath: string }> {
+async function updateGlobalActivations(ctx: PlannerContext, catalog: CatalogSet, requested?: { type: ResourceType; name: string }, pruneMissing = false): Promise<{ changes: PlanChange[]; warnings: PlanMessage[]; errors: PlanMessage[]; state: ActivationState; statePath: string }> {
   const changes: PlanChange[] = [];
   const warnings: PlanMessage[] = [];
   const errors: PlanMessage[] = [];
@@ -235,11 +245,12 @@ async function updateGlobalActivations(ctx: PlannerContext, requested?: { type: 
       nextGlobal.push(activation);
       continue;
     }
-    const refreshed = await refreshActivation(ctx, "global", activation);
+    const refreshed = await refreshActivation(ctx, "global", activation, catalog, pruneMissing);
     changes.push(...refreshed.changes);
     warnings.push(...refreshed.warnings);
     errors.push(...refreshed.errors);
-    nextGlobal.push(refreshed.next ?? activation);
+    if (refreshed.next) nextGlobal.push(refreshed.next);
+    else if (!refreshed.pruned) nextGlobal.push(activation);
   }
   const normalizedGlobal: ActivationState = { version: 1, ...(globalState.packageRoot ? { packageRoot: globalState.packageRoot } : {}), activations: nextGlobal };
   if (JSON.stringify(globalState) !== JSON.stringify(normalizedGlobal)) {
@@ -248,7 +259,7 @@ async function updateGlobalActivations(ctx: PlannerContext, requested?: { type: 
   return { changes, warnings, errors, state: normalizedGlobal, statePath: globalPath };
 }
 
-async function updateProjectActivations(ctx: PlannerContext, projectRoot: string, requested?: { type: ResourceType; name: string }, globalActivations: ActivationRecord[] = []): Promise<{ changes: PlanChange[]; warnings: PlanMessage[]; errors: PlanMessage[]; state: ActivationState; statePath: string }> {
+async function updateProjectActivations(ctx: PlannerContext, projectRoot: string, catalog: CatalogSet, requested?: { type: ResourceType; name: string }, globalActivations: ActivationRecord[] = [], pruneMissing = false): Promise<{ changes: PlanChange[]; warnings: PlanMessage[]; errors: PlanMessage[]; state: ActivationState; statePath: string }> {
   const changes: PlanChange[] = [];
   const warnings: PlanMessage[] = [];
   const errors: PlanMessage[] = [];
@@ -274,11 +285,12 @@ async function updateProjectActivations(ctx: PlannerContext, projectRoot: string
       continue;
     }
     if (!requestedId && globalIds.has(activationId)) continue;
-    const refreshed = await refreshActivation({ ...ctx, projectRoot }, "project", activation);
+    const refreshed = await refreshActivation({ ...ctx, projectRoot }, "project", activation, catalog, pruneMissing);
     changes.push(...refreshed.changes);
     warnings.push(...refreshed.warnings);
     errors.push(...refreshed.errors);
-    nextProject.push(refreshed.next ?? activation);
+    if (refreshed.next) nextProject.push(refreshed.next);
+    else if (!refreshed.pruned) nextProject.push(activation);
   }
   const nextProjectState = { version: 1 as const, activations: nextProject };
   if (JSON.stringify(projectState) !== JSON.stringify(nextProjectState)) {
@@ -292,12 +304,14 @@ function snapshot(scope: "global" | "project", statePathValue: string, state: Ac
 }
 
 export async function planUpdateGlobal(ctx: PlannerContext): Promise<OperationPlan> {
-  const updated = await updateGlobalActivations(ctx);
+  const catalog = await loadCatalogSet(ctx.packageRoot);
+  const updated = await updateGlobalActivations(ctx, catalog);
   return plan("global", updated.changes, updated.warnings, updated.errors, [snapshot("global", updated.statePath, updated.state)]);
 }
 
 export async function planUpdateProject(ctx: PlannerContext): Promise<OperationPlan> {
-  const updated = await updateProjectActivations(ctx, ctx.projectRoot);
+  const catalog = await loadCatalogSet(ctx.packageRoot);
+  const updated = await updateProjectActivations(ctx, ctx.projectRoot, catalog);
   return plan("project", updated.changes, updated.warnings, updated.errors, [snapshot("project", updated.statePath, updated.state, ctx.projectRoot)]);
 }
 
@@ -306,14 +320,15 @@ export async function planUpdateCurrent(ctx: PlannerContext): Promise<OperationP
   const warnings: PlanMessage[] = [];
   const errors: PlanMessage[] = [];
   const activations: PlanActivationSnapshot[] = [];
+  const catalog = await loadCatalogSet(ctx.packageRoot);
 
-  const global = await updateGlobalActivations(ctx);
+  const global = await updateGlobalActivations(ctx, catalog);
   changes.push(...global.changes);
   warnings.push(...global.warnings);
   errors.push(...global.errors);
   activations.push(snapshot("global", global.statePath, global.state));
 
-  const project = await updateProjectActivations(ctx, ctx.projectRoot, undefined, global.state.activations);
+  const project = await updateProjectActivations(ctx, ctx.projectRoot, catalog, undefined, global.state.activations);
   changes.push(...project.changes);
   warnings.push(...project.warnings);
   errors.push(...project.errors);
@@ -327,15 +342,16 @@ export async function planUpdateTarget(ctx: PlannerContext, type: ResourceType, 
   const warnings: PlanMessage[] = [];
   const errors: PlanMessage[] = [];
   const activations: PlanActivationSnapshot[] = [];
+  const catalog = await loadCatalogSet(ctx.packageRoot);
   if (!scope || scope === "global") {
-    const global = await updateGlobalActivations(ctx, { type, name });
+    const global = await updateGlobalActivations(ctx, catalog, { type, name });
     changes.push(...global.changes);
     warnings.push(...global.warnings);
     errors.push(...global.errors);
     activations.push(snapshot("global", global.statePath, global.state));
   }
   if (!scope || scope === "project") {
-    const project = await updateProjectActivations(ctx, ctx.projectRoot, { type, name });
+    const project = await updateProjectActivations(ctx, ctx.projectRoot, catalog, { type, name });
     changes.push(...project.changes);
     warnings.push(...project.warnings);
     errors.push(...project.errors);
@@ -349,8 +365,9 @@ export async function planUpdateAll(ctx: PlannerContext): Promise<OperationPlan>
   const warnings: PlanMessage[] = [];
   const errors: PlanMessage[] = [];
   const activations: PlanActivationSnapshot[] = [];
+  const catalog = await loadCatalogSet(ctx.packageRoot);
 
-  const global = await updateGlobalActivations(ctx);
+  const global = await updateGlobalActivations(ctx, catalog, undefined, true);
   changes.push(...global.changes);
   warnings.push(...global.warnings);
   errors.push(...global.errors);
@@ -369,7 +386,7 @@ export async function planUpdateAll(ctx: PlannerContext): Promise<OperationPlan>
   for (const projectRoot of [...projectSet].sort()) {
     if (!(await projectExists(projectRoot))) continue;
     if (!(await hasProjectState(projectRoot))) continue;
-    const project = await updateProjectActivations(ctx, projectRoot, undefined, global.state.activations);
+    const project = await updateProjectActivations(ctx, projectRoot, catalog, undefined, global.state.activations, true);
     changes.push(...project.changes);
     warnings.push(...project.warnings);
     errors.push(...project.errors);
@@ -386,8 +403,9 @@ export async function planUpdateTargetAll(ctx: PlannerContext, type: ResourceTyp
   const errors: PlanMessage[] = [];
   const activations: PlanActivationSnapshot[] = [];
   const requested = { type, name };
+  const catalog = await loadCatalogSet(ctx.packageRoot);
 
-  const global = await updateGlobalActivations(ctx, requested);
+  const global = await updateGlobalActivations(ctx, catalog, requested);
   changes.push(...global.changes);
   warnings.push(...global.warnings);
   errors.push(...global.errors);
@@ -398,7 +416,7 @@ export async function planUpdateTargetAll(ctx: PlannerContext, type: ResourceTyp
   const keptProjects: string[] = [];
   for (const projectRoot of index.projects) {
     if (!(await projectExists(projectRoot))) continue;
-    const project = await updateProjectActivations(ctx, projectRoot, requested);
+    const project = await updateProjectActivations(ctx, projectRoot, catalog, requested);
     changes.push(...project.changes);
     warnings.push(...project.warnings);
     errors.push(...project.errors);

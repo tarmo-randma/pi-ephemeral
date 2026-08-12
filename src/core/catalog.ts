@@ -176,8 +176,10 @@ export async function loadCatalogSet(root: string): Promise<CatalogSet> {
   problems.push(...alwaysValidated.problems, ...ephemeralValidated.problems);
 
   const resources = [...alwaysValidated.loaded, ...ephemeralValidated.loaded];
-  problems.push(...findDuplicateIdentities(resources));
+  const duplicateProblems = findDuplicateIdentities(resources);
+  problems.push(...duplicateProblems);
 
+  const targetProblems: CatalogProblem[] = [];
   for (const resource of resources) {
     const hasPathProblem = problems.some((problem) => problem.identity === resource.identity && problem.path === resource.record.path && ["absolute_path", "path_traversal", "empty_path_segment", "unsupported_path_prefix", "invalid_path"].includes(problem.code));
     if (hasPathProblem) continue;
@@ -189,17 +191,33 @@ export async function loadCatalogSet(root: string): Promise<CatalogSet> {
       }
     } catch (error) {
       const problem = targetErrorToProblem(error);
-      if (problem) problems.push(problem);
-      else throw error;
+      if (problem) {
+        problems.push(problem);
+        targetProblems.push(problem);
+      } else throw error;
     }
   }
 
-  problems.push(...findTargetCollisions(resources));
+  const collisionProblems = findTargetCollisions(resources);
+  problems.push(...collisionProblems);
+
+  const ephemeralIds = new Set(ephemeralValidated.loaded.map((resource) => resource.identity));
+  const affectsEphemeral = (problem: CatalogProblem): boolean => problem.identity?.split(",").map((item) => item.trim()).some((item) => ephemeralIds.has(item)) === true;
+  const ephemeralCatalogProblems = [
+    ...ephemeralRaw.problems,
+    ...ephemeralParsed.problems,
+    ...ephemeralValidated.problems,
+    ...duplicateProblems.filter(affectsEphemeral),
+    ...targetProblems.filter(affectsEphemeral),
+    ...collisionProblems.filter(affectsEphemeral),
+  ];
+  const ephemeralCatalogHealthy = ephemeralRaw.catalog !== undefined && !ephemeralCatalogProblems.some((problem) => problem.severity === "error");
 
   return {
     alwaysOn: alwaysValidated.loaded,
     ephemeral: ephemeralValidated.loaded,
     resources,
     problems,
+    ephemeralCatalogHealthy,
   };
 }
