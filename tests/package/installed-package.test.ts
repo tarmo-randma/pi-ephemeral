@@ -47,6 +47,7 @@ describe("installed package shape", () => {
       const { stdout: tarList } = await execFileAsync("tar", ["-tzf", tarball]);
       for (const expected of [
         "package/dist/cli.js",
+        "package/dist/pi-ephemeral.js",
         "package/dist/index.js",
         "package/README.md",
         "package/LICENSE",
@@ -65,10 +66,14 @@ describe("installed package shape", () => {
       await writeFile(packageJsonPath, `${JSON.stringify(hostPackage, null, 2)}\n`);
 
       await execFileAsync("npm", ["install"], { cwd: hostDir });
-      expect(existsSync(join(hostDir, "node_modules", "@tarmo-randma", "pi-ephemeral", "dist", "index.js"))).toBe(true);
+      const installedDependencyRoot = join(hostDir, "node_modules", "@tarmo-randma", "pi-ephemeral");
+      expect(existsSync(join(installedDependencyRoot, "dist", "pi-ephemeral.js"))).toBe(true);
+      expect(existsSync(join(installedDependencyRoot, "dist", "index.js"))).toBe(true);
+      const installedDependencyPackage = JSON.parse(await readFile(join(installedDependencyRoot, "package.json"), "utf8"));
+      expect(installedDependencyPackage.pi.extensions).toEqual(["./dist/pi-ephemeral.js"]);
 
       const installedHostPackage = JSON.parse(await readFile(packageJsonPath, "utf8"));
-      expect(installedHostPackage.pi.extensions).toEqual(["./node_modules/@tarmo-randma/pi-ephemeral/dist/index.js"]);
+      expect(installedHostPackage.pi.extensions).toEqual(["./node_modules/@tarmo-randma/pi-ephemeral/dist/pi-ephemeral.js"]);
       expect(installedHostPackage.pi.skills).toBeUndefined();
 
       const base = ["--package", hostDir, "--agent-dir", agentDir, "--cwd", projectDir];

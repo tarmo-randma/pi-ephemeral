@@ -6,11 +6,11 @@
   "type": "module",
   "keywords": ["pi-package", "pi-ephemeral", "example"],
   "dependencies": {
-    "@tarmo-randma/pi-ephemeral": "^0.1.0"
+    "@tarmo-randma/pi-ephemeral": "^0.1.1"
   },
   "pi": {
     "extensions": [
-      "./node_modules/@tarmo-randma/pi-ephemeral/dist/index.js"
+      "./node_modules/@tarmo-randma/pi-ephemeral/dist/pi-ephemeral.js"
     ]
   }
 }

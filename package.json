@@ -1,6 +1,6 @@
 {
   "name": "@tarmo-randma/pi-ephemeral",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Make Pi resources optional and context-activated",
   "license": "MIT",
   "type": "module",
@@ -28,7 +28,7 @@
   },
   "pi": {
     "extensions": [
-      "./dist/index.js"
+      "./dist/pi-ephemeral.js"
     ]
   },
   "files": [

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import piEphemeral from "../../src/index.js";
+import piEphemeral from "../../src/pi-ephemeral.js";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "pi-ephemeral-extension-index-"));
