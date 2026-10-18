@@ -77,6 +77,7 @@ function isTuiLaunch(input: string, ctx: Pick<ExtensionCommandContext, "mode">):
   return undefined;
 }
 
+// Apply slash actions and reload the current session after successful activation changes.
 export async function handleSlashCommand(args: string, ctx: ExtensionCommandContext, runtime: ExtensionRuntimeContext): Promise<string | undefined> {
   const tuiScope = isTuiLaunch(args, ctx);
   if (tuiScope) {
@@ -86,15 +87,29 @@ export async function handleSlashCommand(args: string, ctx: ExtensionCommandCont
   }
 
   // Validate with the slash parser first so CLI-only context flags produce slash-specific errors.
-  parseSlashArgs(args);
+  const command = parseSlashArgs(args);
   const tokens = splitArgs(args);
   if (tokens.length === 0) return HELP_TEXT;
   const agentDir = runtime.agentDir ?? defaultAgentDir();
   const argv = [...tokens, "--package", runtime.packageRoot, "--agent-dir", agentDir, "--cwd", ctx.cwd];
+  const reloadAfterActivation = command.command === "enable" || command.command === "disable";
+  // Wait before changing disk state so a running turn keeps its existing resources until it finishes.
+  if (reloadAfterActivation) await ctx.waitForIdle();
   const stdout: string[] = [];
   const stderr: string[] = [];
   const exitCode = await runCli(argv, { stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) });
   if (exitCode !== 0) throw new Error(stderr.join("").trim() || `pi-ephemeral command failed with exit code ${exitCode}`);
   const output = stdout.join("");
+  if (reloadAfterActivation) {
+    const activationOutput = command.json ? output : output.replace("Reload recommended: run /reload\n", "");
+    ctx.ui.notify(`${activationOutput.trim()}\nActivation saved on disk. Reloading current session resources…`, "info");
+    try {
+      await ctx.reload();
+    } catch (error) {
+      // Reload may already have invalidated this context, so report failure without using its UI.
+      throw new Error(`Activation saved on disk, but current-session resource reload failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+    return undefined;
+  }
   return output.length > 0 ? output : HELP_TEXT;
 }

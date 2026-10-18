@@ -41,7 +41,7 @@ Resources can be active through three scopes:
 2. **Global**: optional resources activated for the current Pi agent directory, usually `~/.pi/agent`.
 3. **Project**: optional resources activated in a resolved project `.pi/` directory.
 
-Global and project activations are stored as JSON state files and materialized as symlinks into Pi discovery directories. Existing sessions need Pi reload/startup boundaries to see changed resources.
+Global and project activations are stored as JSON state files and materialized as symlinks into Pi discovery directories. Existing sessions see changed resources at Pi reload/startup boundaries. Successful `/pi-ephemeral enable` and `/pi-ephemeral disable` commands automatically reload the current session.
 
 ## Bundles
 
@@ -123,6 +123,8 @@ The standalone CLI reads `packageRoot` from `~/.pi/agent/pi-ephemeral-global.jso
 
 The Pi extension exposes `/pi-ephemeral` commands. Command mode mirrors CLI behavior where applicable. Desktop TUI opens from `/pi-ephemeral` and provides an interactive resource manager.
 
+Successful `/pi-ephemeral enable` and `/pi-ephemeral disable` slash commands automatically reload current-session resources, including in native T3 Pi sessions; no restart or second command is needed. They wait for the current turn to become idle before changing activation state, then save activation, notify, and reload. A reload failure is reported as an error explicitly stating that activation was saved on disk; it does not roll back activation or claim the session was reloaded. Failed activation commands do not reload. Read-only commands, `repair`, standalone CLI commands, and interactive TUI apply behavior are unchanged.
+
 TUI behavior:
 
 - Shows a bundle-aware resource table.
@@ -136,7 +138,7 @@ TUI behavior:
 
 ## Host package integration
 
-A host Pi package provides catalogs and loads the `pi-ephemeral` extension. Optional resources usually live under `ephemeral/` and are activated by symlink through `pi-ephemeral` state. Existing sessions need Pi reload/startup boundaries to see changed resources.
+A host Pi package provides catalogs and loads the `pi-ephemeral` extension. Optional resources usually live under `ephemeral/` and are activated by symlink through `pi-ephemeral` state. Existing sessions see changed resources at Pi reload/startup boundaries. Successful `/pi-ephemeral enable` and `/pi-ephemeral disable` commands automatically reload the current session.
 
 ## Validation expectations
 

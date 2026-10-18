@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -23,7 +23,7 @@ async function fixture() {
 }
 
 function ctx(projectRoot: string) {
-  return { cwd: projectRoot, mode: "print", ui: { notify: vi.fn() } } as never;
+  return { cwd: projectRoot, mode: "print", ui: { notify: vi.fn() }, waitForIdle: vi.fn(async () => {}), reload: vi.fn(async () => {}) } as never;
 }
 
 describe("extension slash command", () => {
@@ -55,7 +55,7 @@ describe("extension slash command", () => {
     expect(help).toMatch(/Pattern:/);
 
     const enabled = await handleSlashCommand("enable skill brainstorming --global", ctx(fx.projectRoot), { packageRoot: fx.packageRoot, agentDir: fx.agentDir });
-    expect(enabled).toMatch(/Reload recommended/);
+    expect(enabled).toBeUndefined();
     await expect(readFile(join(fx.agentDir, "skills", "brainstorming", "SKILL.md"), "utf8")).resolves.toContain("Brainstorming");
 
     const status = await handleSlashCommand("status --json", ctx(fx.projectRoot), { packageRoot: fx.packageRoot, agentDir: fx.agentDir });
@@ -66,6 +66,62 @@ describe("extension slash command", () => {
     const info = await handleSlashCommand("info skill brainstorming", ctx(fx.projectRoot), { packageRoot: fx.packageRoot, agentDir: fx.agentDir });
     expect(info).toContain("Type        : skill");
     expect(info).toContain("Action      : enable");
+  });
+
+  // A running turn must finish before activation changes, and reload must see the new disk state.
+  it.each(["enable", "disable"])("waits before %s and notifies before reloading", async (action) => {
+    const fx = await fixture();
+    const runtime = { packageRoot: fx.packageRoot, agentDir: fx.agentDir };
+    const target = join(fx.agentDir, "skills", "brainstorming", "SKILL.md");
+    if (action === "disable") await handleSlashCommand("enable skill brainstorming --global", ctx(fx.projectRoot), runtime);
+    let finishTurn!: () => void;
+    const idle = new Promise<void>((resolve) => { finishTurn = resolve; });
+    const notify = vi.fn();
+    const reload = vi.fn(async () => {
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("Reloading current session"), "info");
+      expect(notify.mock.calls[0]?.[0]).not.toContain("Reload recommended");
+      if (action === "enable") await expect(access(target)).resolves.toBeUndefined();
+      else await expect(access(target)).rejects.toThrow();
+    });
+    const waitForIdle = vi.fn(() => idle);
+    const result = handleSlashCommand(`${action} skill brainstorming --global`, {
+      cwd: fx.projectRoot, mode: "rpc", ui: { notify }, waitForIdle, reload,
+    } as never, runtime);
+    expect(waitForIdle).toHaveBeenCalledOnce();
+    expect(reload).not.toHaveBeenCalled();
+    if (action === "enable") await expect(access(target)).rejects.toThrow();
+    else await expect(access(target)).resolves.toBeUndefined();
+    finishTurn();
+    await expect(result).resolves.toBeUndefined();
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  // Inspection and repair retain their existing command behavior; only enable/disable trigger reload.
+  it("does not wait or reload for non-activation commands or failed activation", async () => {
+    const fx = await fixture();
+    const runtime = { packageRoot: fx.packageRoot, agentDir: fx.agentDir };
+    const waitForIdle = vi.fn(async () => {});
+    const reload = vi.fn(async () => {});
+    const context = { cwd: fx.projectRoot, mode: "rpc", ui: { notify: vi.fn() }, waitForIdle, reload } as never;
+    for (const args of ["", "list", "status", "info skill brainstorming", "repair"]) {
+      expect(await handleSlashCommand(args, context, runtime)).toBeTruthy();
+    }
+    expect(waitForIdle).not.toHaveBeenCalled();
+    await expect(handleSlashCommand("enable skill missing", context, runtime)).rejects.toThrow();
+    await expect(handleSlashCommand("disable skills invalid", context, runtime)).rejects.toThrow();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  // If waiting fails, no activation should be written and no reload should be attempted.
+  it("leaves disk untouched when waiting for idle fails", async () => {
+    const fx = await fixture();
+    const reload = vi.fn();
+    await expect(handleSlashCommand("enable skill brainstorming --global", {
+      cwd: fx.projectRoot, mode: "rpc", ui: { notify: vi.fn() },
+      waitForIdle: async () => { throw new Error("idle failed"); }, reload,
+    } as never, fx)).rejects.toThrow("idle failed");
+    await expect(access(join(fx.agentDir, "skills", "brainstorming"))).rejects.toThrow();
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("runs slash repair against global, current project, and indexed projects", async () => {

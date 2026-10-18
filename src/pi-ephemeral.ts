@@ -9,6 +9,7 @@ export default function piEphemeral(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const packageRoot = discoverHostPackageRoot(pi);
       const output = await handleSlashCommand(args, ctx, { packageRoot });
+      // Activation commands notify before reload and return no output: their old context is now stale.
       if (output) ctx.ui.notify(output.trim(), "info");
     },
   });

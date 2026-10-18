@@ -35,8 +35,8 @@ Typical flow:
 2. Install that package into Pi.
 3. Run `/reload`.
 4. Open `/pi-ephemeral`.
-5. Enable optional resources when needed.
-6. Run `/reload` again so active sessions discover newly enabled resources.
+5. Enable optional resources when needed. `/pi-ephemeral enable <type> <name>` and `/pi-ephemeral disable <type> <name>` automatically reload the current session, including in native T3 Pi; no restart or second command is needed.
+6. If you apply changes through the interactive resource manager instead, run `/reload` so the session discovers them.
 
 ## Example package
 
