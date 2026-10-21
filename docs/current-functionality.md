@@ -59,6 +59,22 @@ Bundle behavior:
 
 ## CLI commands
 
+### `menu`
+
+```bash
+pi-ephemeral menu [--global|--project] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
+```
+
+Opens the existing manager in an ordinary interactive terminal. Scope is fixed at launch, project by default;
+use `--global` explicitly for host-wide choices. The resolved target is displayed. Space stages a toggle,
+Enter saves, and Escape/Ctrl+C cancels. It uses the same catalogue, bundles, search and sequential writer as
+the Pi menu, not a second activation backend. Write errors remain visible and can represent partial saves.
+
+Exit statuses: `0` successful save with changes, `3` no changes, `130` cancelled, `1` failure. Integrations
+must dispatch reload only on `0`. The standalone menu cannot choose a conversation; after saving, an
+integration may queue `/pi-ephemeral reload` in its explicitly identified owning Pi conversation. JSON
+commands remain non-interactive; `menu` does not accept `--json`.
+
 ### `list`
 
 ```bash
@@ -123,7 +139,7 @@ The standalone CLI reads `packageRoot` from `~/.pi/agent/pi-ephemeral-global.jso
 
 The Pi extension exposes `/pi-ephemeral` commands. Command mode mirrors CLI behavior where applicable. Desktop TUI opens from `/pi-ephemeral` and provides an interactive resource manager.
 
-Successful `/pi-ephemeral enable` and `/pi-ephemeral disable` slash commands automatically reload current-session resources, including in native T3 Pi sessions; no restart or second command is needed. They wait for the current turn to become idle before changing activation state, then save activation, notify, and reload. A reload failure is reported as an error explicitly stating that activation was saved on disk; it does not roll back activation or claim the session was reloaded. Failed activation commands do not reload. Read-only commands, `repair`, standalone CLI commands, and interactive TUI apply behavior are unchanged.
+Successful `/pi-ephemeral enable` and `/pi-ephemeral disable` slash commands automatically reload current-session resources, including in native T3 Pi sessions; no restart or second command is needed. They wait for the current turn to become idle before changing activation state, then save activation, notify, and reload. A reload failure is reported as an error explicitly stating that activation was saved on disk; it does not roll back activation or claim the session was reloaded. Failed activation commands do not reload. The interactive Pi menu uses this same reload flow after a successful save with changes; cancel and unchanged saves do not reload. `/pi-ephemeral reload` waits until idle and refreshes saved activations without another mutation or a model call; it is an extension command, not the TUI-only `/reload`. Read-only commands, `repair`, and standalone CLI commands do not reload a conversation.
 
 TUI behavior:
 

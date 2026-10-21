@@ -760,6 +760,39 @@ describe("resource manager component", () => {
     expect(output).not.toContain("No matching commands");
   });
 
+  // Cancellation discards staged choices; only a fully successful write can signal applied to either host.
+  it("keeps save failures visible and never completes them as applied", async () => {
+    const ctx = await context();
+    const done = vi.fn();
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done, notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("grill-me"));
+    component.handleInput("/");
+    for (const char of "grill-me") component.handleInput(char);
+    component.handleInput("\r");
+    component.handleInput(" ");
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    await writeFile(join(ctx.projectRoot, ".pi"), "not a directory");
+    component.handleInput("\r");
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("Save failed"));
+    expect(done).not.toHaveBeenCalled();
+    component.handleInput("\x03");
+    expect(done).toHaveBeenCalledWith("cancelled");
+    await expect(readFile(projectStatePath(ctx.projectRoot))).rejects.toThrow();
+  });
+
+  // A tiny terminal must still offer cancellation and never overflow pi-tui's width contract.
+  it("fits a resized standalone viewport", async () => {
+    const ctx = await context();
+    let rows = 24;
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings(), terminalRows: () => rows });
+    await waitForExpectation(() => expect(component.render(80).join("\n")).toContain("grill-me"));
+    rows = 12;
+    const lines = component.render(40);
+    expect(lines.length).toBeLessThanOrEqual(rows);
+    expect(lines.every((line) => stripAnsi(line).length <= 40)).toBe(true);
+    expect(lines.join("\n")).toContain("Esc cancel");
+  });
+
   it("toggles detail mode with d instead of category tabs", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });

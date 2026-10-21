@@ -1,6 +1,6 @@
 import { DynamicBorder, getSelectListTheme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Container, Key, SelectList, Text, decodeKittyPrintable, matchesKey, type Component, type KeybindingsManager, type SelectItem } from "@earendil-works/pi-tui";
+import { Container, Key, SelectList, Text, TruncatedText, decodeKittyPrintable, matchesKey, truncateToWidth, type Component, type KeybindingsManager, type SelectItem, type SelectListTheme } from "@earendil-works/pi-tui";
 import { applyPlan } from "../core/apply.js";
 import { loadCatalogSet } from "../core/catalog.js";
 import { globalStatePath, projectStatePath } from "../core/project-index.js";
@@ -256,12 +256,17 @@ export async function applyPendingResourceChanges(ctx: PlannerContext, pending: 
   return { plan: mergePlans("mixed", appliedPlans) };
 }
 
+export type ResourceManagerResult = "applied" | "unchanged" | "cancelled";
+
 interface ResourceManagerComponentOptions extends PlannerContext {
   initialScope: ResourceManagerScope;
-  done: (result: "applied" | "cancelled") => void;
+  done: (result: ResourceManagerResult) => void;
   notify: (message: string, type?: "info" | "warning" | "error") => void;
   requestRender: () => void;
-  theme: Theme;
+  theme: Pick<Theme, "fg" | "bold">;
+  selectListTheme?: SelectListTheme;
+  scopeHelp?: string;
+  terminalRows?: () => number;
   keybindings: KeybindingsManager;
 }
 
@@ -282,6 +287,8 @@ export class ResourceManagerComponent implements Component {
   private preview: OperationPlan = emptyPlan("mixed");
   private loading = true;
   private error?: string;
+  private saving = false;
+  private status?: string;
 
   constructor(private readonly options: ResourceManagerComponentOptions) {
     this.scope = options.initialScope;
@@ -322,7 +329,9 @@ export class ResourceManagerComponent implements Component {
     this.container.addChild(new DynamicBorder((s: string) => accent(s)));
     this.container.addChild(new Text(accent(this.options.theme.bold("Pi Ephemeral Resource Manager")), CONTENT_START_COLUMN, 0));
     this.container.addChild(new Text(muted(`Scope: ${this.scope} (fixed at launch) • Details: ${this.details ? "on" : "off"} • Search: ${this.searchMode ? "/" : ""}${this.search || "(none)"}`), CONTENT_START_COLUMN, 0));
-    this.container.addChild(new Text(muted(`Managing ${this.scope} resources. Use /pi-ephemeral --global to manage global scope.`), CONTENT_START_COLUMN, 0));
+    this.container.addChild(new TruncatedText(muted(`Target: ${this.options.projectRoot}`), CONTENT_START_COLUMN, 0));
+    this.container.addChild(new TruncatedText(muted(this.options.scopeHelp ?? `Managing ${this.scope} resources. Use /pi-ephemeral --global to manage global scope.`), CONTENT_START_COLUMN, 0));
+    if (this.status) this.container.addChild(new Text(this.status, CONTENT_START_COLUMN, 0));
 
     if (this.loading) this.container.addChild(new Text("Loading resources…", CONTENT_START_COLUMN, 0));
     else if (this.error) this.container.addChild(new Text(danger(this.error), CONTENT_START_COLUMN, 0));
@@ -335,8 +344,8 @@ export class ResourceManagerComponent implements Component {
           const label = tableRow([row.use, `${row.depth === 1 ? "  " : ""}${row.type}`, row.name, row.action, row.pending ? (row.pendingEnabled ? "enable" : "disable") : ""], rowWidths);
           return { value: row.identity, label: row.muted ? muted(label) : label };
         });
-        const maxVisibleRows = this.details ? 28 : 20;
-        const list = new SelectList(items, Math.min(Math.max(items.length, 1), maxVisibleRows), getSelectListTheme());
+        const maxVisibleRows = Math.max(1, Math.min(this.details ? 28 : 20, (this.options.terminalRows?.() ?? 40) - 14));
+        const list = new SelectList(items, Math.min(Math.max(items.length, 1), maxVisibleRows), this.options.selectListTheme ?? getSelectListTheme());
         if (items.length > 0) {
           if (this.selectedIdentity) {
             const index = items.findIndex((item) => item.value === this.selectedIdentity);
@@ -363,9 +372,11 @@ export class ResourceManagerComponent implements Component {
         this.container.addChild(new Text(messages.join("\n"), CONTENT_START_COLUMN, 0));
       }
     }
-    this.container.addChild(new Text(muted("/ search • d details • Space toggle • Enter apply • Esc cancel"), CONTENT_START_COLUMN, 0));
+    this.container.addChild(new Text(muted("/ search • d details • Space toggle • Enter save • Esc cancel"), CONTENT_START_COLUMN, 0));
     this.container.addChild(new DynamicBorder((s: string) => accent(s)));
-    return this.container.render(width);
+    const lines = this.container.render(width).map((line) => truncateToWidth(line, width));
+    const rows = this.options.terminalRows?.();
+    return rows && lines.length > rows ? [...lines.slice(0, Math.max(0, rows - 2)), ...lines.slice(-2)] : lines;
   }
 
   private selectedRow(): ResourceManagerRow | undefined {
@@ -380,13 +391,20 @@ export class ResourceManagerComponent implements Component {
     this.selectedIdentity = rows[this.selectedIndex]?.identity;
   }
 
+  // Render feedback in either host; the Pi overlay also forwards it to its native notification UI.
+  private notify(message: string, type: "info" | "warning" | "error" = "info"): void {
+    this.status = this.options.theme.fg(type === "info" ? "muted" : type, message);
+    this.options.notify(message, type);
+  }
+
   private async toggleSelected(): Promise<void> {
+    this.status = undefined;
     const row = this.selectedRow();
     if (!row) return;
     this.selectedIdentity = row.identity;
     if (row.kind === "bundle") {
       if (row.action === "") {
-        this.options.notify(`No editable resources in bundle ${row.name} for ${this.scope} scope`, "warning");
+        this.notify(`No editable resources in bundle ${row.name} for ${this.scope} scope`, "warning");
         return;
       }
       const enabled = row.action === "enable";
@@ -394,7 +412,7 @@ export class ResourceManagerComponent implements Component {
         .filter((child) => child.action === row.action)
         .map((child) => ({ type: child.type, name: child.name, scope: this.scope, enabled }));
       if (childToggles.length === 0) {
-        this.options.notify(`No editable resources in bundle ${row.name} for ${this.scope} scope`, "warning");
+        this.notify(`No editable resources in bundle ${row.name} for ${this.scope} scope`, "warning");
         return;
       }
       const childKeys = new Set(childToggles.map((toggle) => pendingKey(toggle)));
@@ -403,7 +421,7 @@ export class ResourceManagerComponent implements Component {
       return;
     }
     if (!row.editable) {
-      this.options.notify(row.readOnlyReason ?? `${row.identity} is read-only`, "warning");
+      this.notify(row.readOnlyReason ?? `${row.identity} is read-only`, "warning");
       return;
     }
     const nextEnabled = !(row.pending ? row.pendingEnabled : this.scope === "global" ? row.globalActive : row.projectActive);
@@ -411,23 +429,37 @@ export class ResourceManagerComponent implements Component {
     await this.refresh();
   }
 
+  // Save through the same sequential writer in both hosts; a failed save never signals completion.
   private async apply(): Promise<void> {
+    this.saving = true;
+    this.status = undefined;
+    try {
+      await this.savePending();
+    } catch (error) {
+      this.notify(`Save failed; some changes may have been written: ${error instanceof Error ? error.message : String(error)}`, "error");
+    } finally {
+      this.saving = false;
+      this.options.requestRender();
+    }
+  }
+
+  private async savePending(): Promise<void> {
     const preview = await previewPendingResourceChanges(this.options, this.pending);
     this.preview = preview;
     if (!preview.ok) {
-      this.options.notify("Pending pi-ephemeral changes have errors; nothing applied.", "error");
+      this.notify("Pending pi-ephemeral changes have errors; nothing applied.", "error");
       this.options.requestRender();
       return;
     }
     const result = await applyPendingResourceChanges(this.options, this.pending);
     this.preview = result.plan;
     if (!result.plan.ok) {
-      this.options.notify("Pi-ephemeral apply failed after recomputing plan.", "error");
+      this.notify("Save failed after recomputing plan; some changes may have been written.", "error");
       this.options.requestRender();
       return;
     }
-    this.options.notify(`Applied ${result.plan.changes.length} pi-ephemeral change(s).`, "info");
-    this.options.done("applied");
+    this.notify(`Saved ${result.plan.changes.length} pi-ephemeral change(s).`, "info");
+    this.options.done(result.plan.changes.length > 0 ? "applied" : "unchanged");
   }
 
   private printableInput(data: string): string | undefined {
@@ -436,7 +468,8 @@ export class ResourceManagerComponent implements Component {
 
   handleInput(data: string): void {
     const { keybindings } = this.options;
-    if (keybindings.matches(data, "tui.select.cancel") || matchesKey(data, Key.escape)) {
+    if (this.saving) return;
+    if (keybindings.matches(data, "tui.select.cancel") || matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
       this.options.done("cancelled");
       this.options.requestRender();
       return;
@@ -469,8 +502,8 @@ export class ResourceManagerComponent implements Component {
     }
     else if (keybindings.matches(data, "tui.select.up") || matchesKey(data, Key.up) || data === "k") this.moveSelection(-1);
     else if (keybindings.matches(data, "tui.select.down") || matchesKey(data, Key.down) || data === "j") this.moveSelection(1);
-    else if (matchesKey(data, Key.space)) void this.toggleSelected();
-    else if (keybindings.matches(data, "tui.select.confirm") || matchesKey(data, Key.enter)) void this.apply();
+    else if (matchesKey(data, Key.space) && !this.loading && !this.error) void this.toggleSelected();
+    else if ((keybindings.matches(data, "tui.select.confirm") || matchesKey(data, Key.enter)) && !this.loading && !this.error) void this.apply();
     this.options.requestRender();
   }
 }
@@ -479,8 +512,8 @@ export interface LaunchResourceManagerTuiOptions extends PlannerContext {
   scope: ResourceManagerScope;
 }
 
-export async function launchResourceManagerTui(ctx: ExtensionCommandContext, options: LaunchResourceManagerTuiOptions): Promise<void> {
-  const result = await ctx.ui.custom<"applied" | "cancelled">(
+export async function launchResourceManagerTui(ctx: ExtensionCommandContext, options: LaunchResourceManagerTuiOptions): Promise<ResourceManagerResult> {
+  const result = await ctx.ui.custom<ResourceManagerResult>(
     (tui, theme, keybindings, done) => new ResourceManagerComponent({
       ...options,
       initialScope: options.scope,
@@ -488,6 +521,7 @@ export async function launchResourceManagerTui(ctx: ExtensionCommandContext, opt
       notify: (message, type) => ctx.ui.notify(message, type),
       requestRender: () => tui.requestRender(),
       theme,
+      selectListTheme: getSelectListTheme(),
       keybindings,
     }),
     {
@@ -501,5 +535,6 @@ export async function launchResourceManagerTui(ctx: ExtensionCommandContext, opt
       onHandle: (handle) => handle.focus(),
     },
   );
-  if (result === "cancelled") ctx.ui.notify("Pi-ephemeral changes cancelled.", "info");
+  if (result === "cancelled") ctx.ui.notify("Pi-ephemeral changes cancelled. No further changes saved.", "info");
+  return result;
 }

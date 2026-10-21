@@ -18,15 +18,21 @@ export type CliCommand =
   | (BaseCommand & { command: "info"; mode: "query"; query: string; width: number })
   | (BaseCommand & { command: "enable"; type: ResourceType; name: string; scope: "global" | "project" })
   | (BaseCommand & { command: "disable"; type: ResourceType; name: string; scope: "global" | "project" })
+  | (BaseCommand & { command: "menu"; scope: "global" | "project" })
   | (BaseCommand & { command: "repair" });
 
-const COMMANDS = ["list", "status", "info", "enable", "disable", "repair"] as const;
+const COMMANDS = ["list", "status", "info", "enable", "disable", "repair", "menu"] as const;
 const RESOURCE_TYPES = ["skill", "extension", "prompt", "theme"] as const;
 const CONTEXT_FLAGS = new Set(["--package", "--agent-dir", "--cwd"]);
 
 export class ArgParseError extends Error {}
 
 export const HELP_TEXT = `pi-ephemeral manages optional Pi resources from a package catalog.
+
+menu
+  Open the existing resource manager in this terminal. Escape/Ctrl+C cancels without saving.
+  Exit status: 0 saved changes, 3 unchanged, 130 cancelled, 1 failed (possibly partially saved).
+  Pattern: pi-ephemeral menu [--global|--project] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
 
 list
   Show available resources, grouped by bundle, optionally filtered by query.
@@ -170,6 +176,12 @@ export function parseArgs(argv: string[]): CliCommand {
   const [command, ...rest] = argv;
   rejectSlashAndShort(command!);
   if (!(COMMANDS as readonly string[]).includes(command!)) throw new ArgParseError(`Unknown command ${command}.\n${HELP_TEXT}`);
+
+  if (command === "menu") {
+    if (rest.some((token) => ["--json", "--all", "--filter", "--width", "-w"].includes(token))) throw new ArgParseError("menu accepts only scope and context flags");
+    const options = parseOptions(rest);
+    return { command, scope: options.scope ?? "project", json: false, packageRoot: requirePackageRoot(options), agentDir: options.agentDir, cwd: options.cwd };
+  }
 
   if (command === "list" || command === "status") {
     const options = parseOptions(rest);

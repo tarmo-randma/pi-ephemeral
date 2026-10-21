@@ -12,6 +12,7 @@ export interface ExtensionRuntimeContext {
 }
 
 const CLI_ONLY_FLAGS = new Set(["--cwd", "--package", "--agent-dir"]);
+const SLASH_HELP_TEXT = `${HELP_TEXT}\nPi extension only: /pi-ephemeral reload waits until idle and reloads saved activations in this conversation.\n`;
 
 function defaultAgentDir(): string {
   return process.env.PI_CODING_AGENT_DIR ? resolve(process.env.PI_CODING_AGENT_DIR) : join(homedir(), ".pi", "agent");
@@ -65,6 +66,7 @@ function rejectCliOnly(tokens: string[]): void {
 export function parseSlashArgs(input: string): CliCommand {
   const tokens = splitArgs(input);
   rejectCliOnly(tokens);
+  if (tokens[0] === "menu") throw new ArgParseError("menu is CLI-only; use /pi-ephemeral in Pi's terminal");
   if (tokens.length === 0) return { command: "help" };
   return parseArgs([...tokens, "--package", process.cwd()]);
 }
@@ -77,19 +79,35 @@ function isTuiLaunch(input: string, ctx: Pick<ExtensionCommandContext, "mode">):
   return undefined;
 }
 
+// Reload only this conversation; after reload its old extension context must not be used.
+async function reloadCurrentResources(ctx: ExtensionCommandContext, message = "Activation saved on disk."): Promise<void> {
+  try {
+    await ctx.waitForIdle();
+    ctx.ui.notify(`${message} Reloading current session resources…`, "info");
+    await ctx.reload();
+  } catch (error) {
+    throw new Error(`Activation saved on disk, but current-session resource reload failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+}
+
 // Apply slash actions and reload the current session after successful activation changes.
 export async function handleSlashCommand(args: string, ctx: ExtensionCommandContext, runtime: ExtensionRuntimeContext): Promise<string | undefined> {
+  if (args.trim() === "reload") {
+    await reloadCurrentResources(ctx, "Refreshing saved activations.");
+    return undefined;
+  }
   const tuiScope = isTuiLaunch(args, ctx);
   if (tuiScope) {
     const agentDir = runtime.agentDir ?? defaultAgentDir();
-    await launchResourceManagerTui(ctx, { packageRoot: runtime.packageRoot, agentDir, projectRoot: await resolveProjectRoot(ctx.cwd), scope: tuiScope });
+    const result = await launchResourceManagerTui(ctx, { packageRoot: runtime.packageRoot, agentDir, projectRoot: await resolveProjectRoot(ctx.cwd), scope: tuiScope });
+    if (result === "applied") await reloadCurrentResources(ctx);
     return undefined;
   }
 
   // Validate with the slash parser first so CLI-only context flags produce slash-specific errors.
   const command = parseSlashArgs(args);
   const tokens = splitArgs(args);
-  if (tokens.length === 0) return HELP_TEXT;
+  if (tokens.length === 0) return SLASH_HELP_TEXT;
   const agentDir = runtime.agentDir ?? defaultAgentDir();
   const argv = [...tokens, "--package", runtime.packageRoot, "--agent-dir", agentDir, "--cwd", ctx.cwd];
   const reloadAfterActivation = command.command === "enable" || command.command === "disable";
@@ -102,14 +120,8 @@ export async function handleSlashCommand(args: string, ctx: ExtensionCommandCont
   const output = stdout.join("");
   if (reloadAfterActivation) {
     const activationOutput = command.json ? output : output.replace("Reload recommended: run /reload\n", "");
-    ctx.ui.notify(`${activationOutput.trim()}\nActivation saved on disk. Reloading current session resources…`, "info");
-    try {
-      await ctx.reload();
-    } catch (error) {
-      // Reload may already have invalidated this context, so report failure without using its UI.
-      throw new Error(`Activation saved on disk, but current-session resource reload failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
+    await reloadCurrentResources(ctx, `${activationOutput.trim()}\nActivation saved on disk.`);
     return undefined;
   }
-  return output.length > 0 ? output : HELP_TEXT;
+  return output.length > 0 ? output : SLASH_HELP_TEXT;
 }

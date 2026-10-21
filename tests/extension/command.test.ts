@@ -159,7 +159,34 @@ describe("extension slash command", () => {
     const focus = vi.fn();
     launchOptions.onHandle({ focus });
     expect(focus).toHaveBeenCalledOnce();
-    expect(notify).toHaveBeenCalledWith("Pi-ephemeral changes cancelled.", "info");
+    expect(notify).toHaveBeenCalledWith("Pi-ephemeral changes cancelled. No further changes saved.", "info");
+  });
+
+  // Menu saves and the explicit RPC-safe command must share the current-session reload flow.
+  it("reloads after an overlay save and from the explicit reload command, never after cancel", async () => {
+    const fx = await fixture();
+    for (const outcome of ["applied", "cancelled", "unchanged"] as const) {
+      const context = { cwd: fx.projectRoot, mode: "tui", ui: { notify: vi.fn(), custom: vi.fn(async () => outcome) }, waitForIdle: vi.fn(), reload: vi.fn() };
+      await handleSlashCommand("", context as never, fx);
+      expect(context.reload).toHaveBeenCalledTimes(outcome === "applied" ? 1 : 0);
+    }
+    const context = { cwd: fx.projectRoot, mode: "rpc", ui: { notify: vi.fn() }, waitForIdle: vi.fn(), reload: vi.fn() };
+    await handleSlashCommand("reload", context as never, fx);
+    expect(context.waitForIdle).toHaveBeenCalledOnce();
+    expect(context.reload).toHaveBeenCalledOnce();
+    expect(() => parseSlashArgs("menu")).toThrow("CLI-only");
+  });
+
+  // Reload may invalidate UI methods even when it fails; report the failure without using them again.
+  it("does not reuse the old context after reload fails", async () => {
+    const fx = await fixture();
+    let invalid = false;
+    const notify = vi.fn(() => { if (invalid) throw new Error("stale UI"); });
+    await expect(handleSlashCommand("reload", {
+      cwd: fx.projectRoot, mode: "rpc", ui: { notify }, waitForIdle: vi.fn(),
+      reload: async () => { invalid = true; throw new Error("reload broke"); },
+    } as never, fx)).rejects.toThrow("resource reload failed: reload broke");
+    expect(notify).toHaveBeenCalledOnce();
   });
 
   it("resolves the git project root before launching the TUI", async () => {

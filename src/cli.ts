@@ -367,6 +367,12 @@ export async function runCli(argv = process.argv.slice(2), io: CliIO = { stdout:
 
   try {
     const ctx = await contextFor(command);
+    if (command.command === "menu") {
+      const { launchTerminalMenu } = await import("./tui/terminal-menu.js");
+      const result = await launchTerminalMenu({ ...ctx, scope: command.scope });
+      io.stdout(result === "applied" ? "Saved activations on disk.\n" : result === "unchanged" ? "No activation changes saved.\n" : "Cancelled. No further changes saved.\n");
+      return result === "applied" ? 0 : result === "unchanged" ? 3 : 130;
+    }
     if (command.command === "list") {
       if (command.json) {
         const output = await listOutput(command, ctx);
