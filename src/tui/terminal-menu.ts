@@ -1,5 +1,6 @@
 import { getMarkdownTheme, getSelectListTheme, initTheme } from "@earendil-works/pi-coding-agent";
-import { getKeybindings, ProcessTerminal, TUI } from "@earendil-works/pi-tui";
+import { getKeybindings, ProcessTerminal, type TUI } from "@earendil-works/pi-tui";
+import * as terminalUi from "@earendil-works/pi-tui";
 import { ResourceManagerComponent, type LaunchResourceManagerTuiOptions, type ResourceManagerResult } from "./resource-manager.js";
 
 // Host the existing manager in a normal terminal, restoring input modes before returning to its caller.
@@ -9,7 +10,10 @@ export async function launchTerminalMenu(options: LaunchResourceManagerTuiOption
   const selectListTheme = getSelectListTheme();
   const markdownTheme = getMarkdownTheme();
   const terminal = new ProcessTerminal();
-  const tui = new TUI(terminal);
+  // Pi 1.x names its concrete main-screen renderer; older host packages still export it as TUI.
+  const renderers = terminalUi as unknown as { TuiMainScreen?: new (terminal: ProcessTerminal) => TUI; TUI: new (terminal: ProcessTerminal) => TUI };
+  const MainScreen = renderers.TuiMainScreen ?? renderers.TUI;
+  const tui = new MainScreen(terminal);
   let finish!: (result: ResourceManagerResult) => void;
   const result = new Promise<ResourceManagerResult>((resolve) => { finish = resolve; });
   const component = new ResourceManagerComponent({

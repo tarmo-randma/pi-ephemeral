@@ -36,7 +36,7 @@ Typical flow:
 3. Run `/reload`.
 4. Open `/pi-ephemeral`.
 5. Enable optional resources when needed. `/pi-ephemeral enable <type> <name>` and `/pi-ephemeral disable <type> <name>` automatically reload the current session, including in native T3 Pi; no restart or second command is needed.
-6. The in-Pi resource manager also reloads after a successful save. In an ordinary terminal, run `pi-ephemeral menu` (or `menu --global`); it saves activations but has no conversation context. An integration can queue `/pi-ephemeral reload` in the intended Pi conversation after a successful save.
+6. The in-Pi manager also reloads after a successful save. In an ordinary terminal, run `pi-ephemeral menu` (or `menu --global`). Each affected Pi conversation refreshes changed saved choices before its next ordinary idle message; busy steering is left alone. T3 needs the extension loaded before its input bridge through existing Pi launch arguments, not an application patch. See [setup and limits](docs/current-functionality.md#changes-saved-outside-a-conversation).
 
 ## Example package
 

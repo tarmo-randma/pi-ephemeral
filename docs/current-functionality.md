@@ -72,10 +72,10 @@ the Pi menu, not a second activation backend. Write errors remain visible and ca
 Closing after a failed save returns failure (`1`), not ordinary cancellation, and preserves the partial-save
 warning. A successful retry completes normally and allows the intended conversation to reload.
 
-Exit statuses: `0` successful save with changes, `3` no changes, `130` cancelled, `1` failure. Integrations
-must dispatch reload only on `0`. The standalone menu cannot choose a conversation; after saving, an
-integration may queue `/pi-ephemeral reload` in its explicitly identified owning Pi conversation. JSON
-commands remain non-interactive; `menu` does not accept `--json`.
+Exit statuses: `0` successful save with changes, `3` no changes, `130` cancelled, `1` failure. The standalone
+menu does not send anything to a conversation. With the extension loaded, each affected conversation
+refreshes saved choices before its next ordinary idle input, including partial choices left by a failed
+save. JSON commands remain non-interactive; `menu` does not accept `--json`.
 
 ### `list`
 
@@ -153,6 +153,34 @@ TUI behavior:
 - Backspace-to-empty exits search mode so navigation resumes.
 - Real keyboard handling supports `j/k`, arrow keys, printable Kitty CSI-u input, and Esc close/cancel.
 - TUI table alignment keeps title/status/header/content columns semantically aligned while accounting for the SelectList selector gutter; child indentation appears only inside the `Type` cell.
+
+### Changes saved outside a conversation
+
+This next-input workflow requires Pi 1.3 or newer public command-expansion APIs. Before a new ordinary
+idle user input, the extension compares normalized global/project activation choices
+with its discovery-boundary snapshot. Changed choices trigger the existing reload command, then replay the
+original text/images through the fresh runtime; the original input dispatch is handled exactly once.
+Busy steering is unchanged; changes are checked at the next new idle input. Registered extension commands
+already dispatch before input, while a newly enabled slash command can be discovered and replayed after
+refresh. Unchanged choices do not repeatedly reload. There is no watcher, transport, daemon or second backend.
+
+The hook must load before source-transforming input extensions such as T3's skill-chip bridge. In T3's
+native Pi launch arguments, prepend `--extension "/absolute/path/to/host-package"`, keeping the existing
+arguments and package configuration. The host package directory preserves catalogue metadata; a standalone
+path to this extension's dist file does not. The same host entry is deduplicated at startup and reload.
+Configured arguments precede T3's bridge; no T3 application patch/restart is required. New processes need
+this one-time bootstrap; editing files does not retrofit the ordering of resident Pi runtimes.
+
+If no model or synchronously configured authentication is available, input is left to Pi's native preflight.
+Async-only auth providers can use `/pi-ephemeral reload`. Replay input has source `extension` rather than
+its original `rpc`/`interactive`; source-sensitive extensions can observe that difference. Ordinary replay
+starts agent activity before the original RPC responds handled; a newly registered extension slash command
+does not require agent activity. Saved choices are recorded when refresh is attempted to avoid retry loops.
+
+A late Pi reload failure can leave the old runtime invalidated, as with manual reload. The completion gate
+rejects, reports that activation was saved but reload failed, and lets Pi settle the original input using
+its normal error handling. This exceptional already-broken session can produce stale-handler diagnostics;
+restart **that Pi conversation**. No rollback, timeout, synthetic lifecycle or process restart is performed.
 
 ## Host package integration
 

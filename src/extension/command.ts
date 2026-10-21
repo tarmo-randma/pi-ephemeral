@@ -86,7 +86,7 @@ async function reloadCurrentResources(ctx: ExtensionCommandContext, message = "A
     ctx.ui.notify(`${message} Reloading current session resources…`, "info");
     await ctx.reload();
   } catch (error) {
-    throw new Error(`Activation saved on disk, but current-session resource reload failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new Error(`Activation saved on disk, but current-session resource reload failed: ${error instanceof Error ? error.message : String(error)}. Restart this Pi conversation.`, { cause: error });
   }
 }
 
