@@ -69,6 +69,8 @@ Opens the existing manager in an ordinary interactive terminal. Scope is fixed a
 use `--global` explicitly for host-wide choices. The resolved target is displayed. Space stages a toggle,
 Enter saves, and Escape/Ctrl+C cancels. It uses the same catalogue, bundles, search and sequential writer as
 the Pi menu, not a second activation backend. Write errors remain visible and can represent partial saves.
+Closing after a failed save returns failure (`1`), not ordinary cancellation, and preserves the partial-save
+warning. A successful retry completes normally and allows the intended conversation to reload.
 
 Exit statuses: `0` successful save with changes, `3` no changes, `130` cancelled, `1` failure. Integrations
 must dispatch reload only on `0`. The standalone menu cannot choose a conversation; after saving, an

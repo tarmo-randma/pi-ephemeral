@@ -1,15 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.js";
 
-// The terminal host reports saved/cancelled/unchanged independently of stdout so actions never guess.
+// The terminal host reports saved/cancelled/unchanged/failed independently of stdout so actions never guess.
 describe("terminal menu CLI", () => {
-  it.each([["applied", 0], ["unchanged", 3], ["cancelled", 130]])("returns the %s outcome", async (result, status) => {
+  it.each([["applied", 0], ["unchanged", 3], ["cancelled", 130], ["failed", 1]])("returns the %s outcome", async (result, status) => {
     vi.resetModules();
     const launchTerminalMenu = vi.fn(async () => result);
     vi.doMock("../../src/tui/terminal-menu.js", () => ({ launchTerminalMenu }));
     const { runCli } = await import("../../src/cli.js");
     const stdout = vi.fn();
-    expect(await runCli(["menu", "--package", process.cwd(), "--cwd", process.cwd(), "--global"], { stdout, stderr: vi.fn() })).toBe(status);
+    const stderr = vi.fn();
+    expect(await runCli(["menu", "--package", process.cwd(), "--cwd", process.cwd(), "--global"], { stdout, stderr })).toBe(status);
+    if (result === "failed") {
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("some changes may have been written"));
+      expect(stdout).not.toHaveBeenCalled();
+    }
     expect(launchTerminalMenu).toHaveBeenCalledWith(expect.objectContaining({ scope: "global", projectRoot: process.cwd() }));
     vi.doUnmock("../../src/tui/terminal-menu.js");
   });

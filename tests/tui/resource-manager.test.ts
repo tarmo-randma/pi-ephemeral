@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { getKeybindings } from "@earendil-works/pi-tui";
@@ -760,8 +760,8 @@ describe("resource manager component", () => {
     expect(output).not.toContain("No matching commands");
   });
 
-  // Cancellation discards staged choices; only a fully successful write can signal applied to either host.
-  it("keeps save failures visible and never completes them as applied", async () => {
+  // Closing after failure must keep its warning; fixing the write problem and saving can still succeed.
+  it.each(["cancel", "retry"])("preserves a failed save outcome through %s", async (nextAction) => {
     const ctx = await context();
     const done = vi.fn();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done, notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
@@ -775,9 +775,26 @@ describe("resource manager component", () => {
     component.handleInput("\r");
     await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("Save failed"));
     expect(done).not.toHaveBeenCalled();
-    component.handleInput("\x03");
-    expect(done).toHaveBeenCalledWith("cancelled");
-    await expect(readFile(projectStatePath(ctx.projectRoot))).rejects.toThrow();
+    if (nextAction === "cancel") {
+      component.handleInput("\x1b");
+      expect(done).toHaveBeenCalledWith("failed");
+      await expect(readFile(projectStatePath(ctx.projectRoot))).rejects.toThrow();
+    } else {
+      await rm(join(ctx.projectRoot, ".pi"));
+      component.handleInput("\r");
+      await waitForExpectation(() => expect(done).toHaveBeenCalledWith("applied"));
+      expect((await readState(projectStatePath(ctx.projectRoot))).activations).toContainEqual(expect.objectContaining({ name: "grill-me" }));
+    }
+  });
+
+  // Global choices affect the agent directory, not the project whose menu happened to launch them.
+  it("shows the global state path only for global scope", async () => {
+    const ctx = await context();
+    for (const scope of ["global", "project"] as const) {
+      const component = new ResourceManagerComponent({ ...ctx, initialScope: scope, done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
+      const target = scope === "global" ? globalStatePath(ctx.agentDir) : ctx.projectRoot;
+      expect(component.render(500).join("\n")).toContain(`Target: ${target}`);
+    }
   });
 
   // A tiny terminal must still offer cancellation and never overflow pi-tui's width contract.

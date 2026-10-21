@@ -163,12 +163,13 @@ describe("extension slash command", () => {
   });
 
   // Menu saves and the explicit RPC-safe command must share the current-session reload flow.
-  it("reloads after an overlay save and from the explicit reload command, never after cancel", async () => {
+  it("reloads after an overlay save and from the explicit reload command, never after cancel or failure", async () => {
     const fx = await fixture();
-    for (const outcome of ["applied", "cancelled", "unchanged"] as const) {
+    for (const outcome of ["applied", "cancelled", "unchanged", "failed"] as const) {
       const context = { cwd: fx.projectRoot, mode: "tui", ui: { notify: vi.fn(), custom: vi.fn(async () => outcome) }, waitForIdle: vi.fn(), reload: vi.fn() };
       await handleSlashCommand("", context as never, fx);
       expect(context.reload).toHaveBeenCalledTimes(outcome === "applied" ? 1 : 0);
+      if (outcome === "failed") expect(context.ui.notify).toHaveBeenCalledWith(expect.stringContaining("some changes may have been written"), "error");
     }
     const context = { cwd: fx.projectRoot, mode: "rpc", ui: { notify: vi.fn() }, waitForIdle: vi.fn(), reload: vi.fn() };
     await handleSlashCommand("reload", context as never, fx);
