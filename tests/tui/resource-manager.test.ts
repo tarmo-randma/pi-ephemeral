@@ -116,6 +116,14 @@ async function waitForExpectation(assertion: () => void): Promise<void> {
   if (lastError) throw lastError;
 }
 
+// Wait for staging and its refreshed rows, without relying on a dump of planned filesystem operations.
+async function waitForPendingChoices(component: ResourceManagerComponent): Promise<void> {
+  await waitForExpectation(() => {
+    expect(component.render(100).join("\n")).not.toContain("Loading resources");
+    expect((component as unknown as { pending: PendingResourceToggle[] }).pending.length).toBeGreaterThan(0);
+  });
+}
+
 function lineContaining(output: string, text: string): string {
   return output.split("\n").find((line) => line.includes(text)) ?? "";
 }
@@ -270,6 +278,7 @@ describe("resource manager component", () => {
     expect(output).not.toContain("Actual or additional resources may be discovered at runtime.");
   });
 
+  // A contained-resource match still stages its owning package extension, not the contained resource.
   it("toggles the package extension from a contained-resource search result", async () => {
     const ctx = await context();
     await addAtomicPackage(ctx.packageRoot);
@@ -288,7 +297,7 @@ describe("resource manager component", () => {
     component.handleInput(" ");
     await waitForExpectation(() => {
       output = component.render(100).join("\n");
-      expect(output).toContain("extension:example-native-package");
+      expect(tableItemLine(output, "example-native-package")).toMatch(/disable/);
     });
     expect((component as unknown as { pending: PendingResourceToggle[] }).pending).toEqual([
       { type: "extension", name: "example-native-package", scope: "project", enabled: true },
@@ -313,7 +322,7 @@ describe("resource manager component", () => {
 
     component.handleInput("d");
     component.handleInput(" ");
-    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("extension:example-native-package"));
+    await waitForPendingChoices(component);
     const output = component.render(100).join("\n");
     expect(output).not.toContain("skill:brainstorming");
     expect(output).not.toContain("prompt:review");
@@ -393,6 +402,7 @@ describe("resource manager component", () => {
     expect(output).toContain("zzz-height-08");
   });
 
+  // Bundle staging and saving must still enable all editable children without a filesystem preview.
   it("cascades bundle enable toggles and applies both editable child activations", async () => {
     const ctx = await context();
     const done = vi.fn();
@@ -401,11 +411,10 @@ describe("resource manager component", () => {
     await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("pi-intercom"));
     component.handleInput(" ");
 
-    await waitForExpectation(() => {
-      const output = component.render(100).join("\n");
-      expect(output).toContain("extension:pi-intercom");
-      expect(output).toContain("skill:pi-intercom");
-    });
+    await waitForPendingChoices(component);
+    expect((component as unknown as { pending: PendingResourceToggle[] }).pending.map(({ type, name }) => `${type}:${name}`)).toEqual([
+      "extension:pi-intercom", "skill:pi-intercom",
+    ]);
     component.handleInput("\r");
 
     await waitForExpectation(() => expect(done).toHaveBeenCalledWith("applied"));
@@ -415,6 +424,7 @@ describe("resource manager component", () => {
     ] });
   });
 
+  // The child row shows staging directly and no sibling acquires a pending choice.
   it("detail-mode child toggle affects only the selected child", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
@@ -428,11 +438,11 @@ describe("resource manager component", () => {
     component.handleInput("j");
     component.handleInput(" ");
 
-    await waitForExpectation(() => {
-      const output = component.render(100).join("\n");
-      expect(output).toContain("skill:librarian");
-      expect(output).not.toContain("extension:pi-web-access");
-    });
+    await waitForPendingChoices(component);
+    expect(tableItemLine(component.render(100).join("\n"), "librarian")).toMatch(/disable\s+enable/);
+    expect((component as unknown as { pending: PendingResourceToggle[] }).pending).toEqual([
+      { type: "skill", name: "librarian", scope: "project", enabled: true },
+    ]);
   });
 
   it("bundle disable cascades only mutable active children in current scope and not unrelated roots", async () => {
@@ -452,6 +462,7 @@ describe("resource manager component", () => {
     await expect(readState(projectStatePath(ctx.projectRoot))).resolves.toEqual({ version: 1, activations: [{ type: "skill", name: "grill-me", target: ".pi/skills/grill-me" }] });
   });
 
+  // Project bundle staging must continue to exclude inherited and always-on resources.
   it("bundle enable in project scope skips globally active and always-on children", async () => {
     const ctx = await context();
     await applyPlan(await planEnable({ ...ctx, scope: "global", type: "extension", name: "pi-web-access" }));
@@ -461,13 +472,10 @@ describe("resource manager component", () => {
     component.handleInput("j");
     component.handleInput(" ");
 
-    await waitForExpectation(() => {
-      const output = component.render(100).join("\n");
-      expect(output).toContain("skill:librarian");
-      expect(output).toContain("skill:pi-web-access");
-      expect(output).not.toContain("extension:pi-web-access");
-      expect(output).not.toContain("skill:using-superpowers");
-    });
+    await waitForPendingChoices(component);
+    expect((component as unknown as { pending: PendingResourceToggle[] }).pending.map(({ type, name }) => `${type}:${name}`)).toEqual([
+      "skill:librarian", "skill:pi-web-access", "prompt:web-research",
+    ]);
   });
 
   // A globally inherited bundle cannot acquire staged project choices.
@@ -560,7 +568,7 @@ describe("resource manager component", () => {
     component.handleInput("j");
     component.handleInput("j");
     component.handleInput(" ");
-    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    await waitForPendingChoices(component);
     component.handleInput("\r");
 
     await waitForExpectation(() => expect(done).toHaveBeenCalledWith("applied"));
@@ -657,6 +665,7 @@ describe("resource manager component", () => {
     expect(done).toHaveBeenCalledWith("cancelled");
   });
 
+  // Kitty down-arrow input must still select the resource that receives the staged toggle.
   it("navigates with Kitty protocol down arrow input", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
@@ -666,10 +675,11 @@ describe("resource manager component", () => {
     component.handleInput("\x1b[1;1B");
     component.handleInput(" ");
 
-    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    await waitForPendingChoices(component);
     expect(component.render(100).join("\n")).toContain("enable");
   });
 
+  // Kitty up-arrow input must still select the bundle that receives the staged toggle.
   it("navigates with Kitty protocol up arrow input", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
@@ -680,7 +690,7 @@ describe("resource manager component", () => {
     component.handleInput("\x1b[1;1A");
     component.handleInput(" ");
 
-    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    await waitForPendingChoices(component);
     expect(component.render(100).join("\n")).toContain("enable");
   });
 
@@ -726,7 +736,7 @@ describe("resource manager component", () => {
     component.handleInput("j");
     component.handleInput(" ");
 
-    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    await waitForPendingChoices(component);
     expect(component.render(100).join("\n")).toContain("enable");
   });
 
@@ -748,7 +758,7 @@ describe("resource manager component", () => {
     component.handleInput("j");
     component.handleInput(" ");
 
-    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    await waitForPendingChoices(component);
     expect(component.render(100).join("\n")).toContain("enable");
   });
 
@@ -779,7 +789,7 @@ describe("resource manager component", () => {
     for (const char of "grill-me") component.handleInput(char);
     component.handleInput("\r");
     component.handleInput(" ");
-    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    await waitForPendingChoices(component);
     await writeFile(join(ctx.projectRoot, ".pi"), "not a directory");
     component.handleInput("\r");
     await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("Save failed"));
@@ -841,6 +851,29 @@ describe("resource manager component", () => {
     expect(resourceLines(component.render(160))).toHaveLength(5);
   });
 
+  // Staging must keep a short pane useful: rows show choices, not per-file planner operations.
+  it.each(["bundle", "resource"])("keeps five visible rows after staging a %s without operation messages", async (kind) => {
+    const ctx = await context();
+    await addHeightFixtureResources(ctx.packageRoot, true);
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings(), terminalRows: () => 10 });
+    await waitForExpectation(() => expect(component.render(160).join("\n")).toContain("grill-me"));
+    if (kind === "resource") {
+      component.handleInput("j");
+      component.handleInput("j");
+    }
+    component.handleInput(" ");
+    await waitForPendingChoices(component);
+    const lines = component.render(160).map(stripAnsi);
+    const output = lines.join("\n");
+    expect(lines).toHaveLength(10);
+    expect(lines.filter((line) => /(?:^|\s)(?:bundle|skill)\s/.test(line))).toHaveLength(5);
+    expect(tableItemLine(output, kind === "bundle" ? "pi-intercom" : "grill-me")).toMatch(
+      kind === "bundle" ? /project\s+bundle\s+pi-intercom\s+disable/ : /grill-me\s+disable\s+enable/,
+    );
+    expect(output).not.toMatch(/change:|Create symlink|Record activation|Index project|… \d+ more/);
+    expect(lines.at(-2)).toContain("g global");
+  });
+
   // Removing the generic read-only notice must not hide a real catalogue problem in a short pane.
   it("keeps actual catalogue errors visible in a compact viewport", async () => {
     const ctx = await context();
@@ -878,7 +911,7 @@ describe("resource manager component", () => {
     expect(output).toContain("g project");
     expect(tableItemLine(output, "grill-me")).toContain("disable");
     component.handleInput(" ");
-    await waitForExpectation(() => expect(component.render(500).join("\n")).toContain("change:"));
+    await waitForPendingChoices(component);
     component.handleInput("g");
     output = component.render(500).join("\n");
     expect(output).toContain("Scope: global");
@@ -911,7 +944,7 @@ describe("resource manager component", () => {
     component.handleInput("j");
     component.handleInput("j");
     component.handleInput(" ");
-    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    await waitForPendingChoices(component);
     component.handleInput("\r");
     await waitForExpectation(() => expect(done).toHaveBeenCalledWith("applied"));
     expect((await readState(globalStatePath(ctx.agentDir))).activations).toEqual([

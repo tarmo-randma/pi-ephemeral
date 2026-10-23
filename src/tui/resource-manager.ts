@@ -353,9 +353,7 @@ export class ResourceManagerComponent implements Component {
           ...vm.errors.map((item) => danger(`error: ${item.message}`)),
           ...this.preview.warnings.filter((item) => item.code !== "read_only_catalog").map((item) => warning(`plan warning: ${item.message}`)),
           ...this.preview.errors.map((item) => danger(`plan error: ${item.message}`)),
-          ...this.preview.changes.slice(0, 5).map((change) => muted(`change: ${change.message}`)),
         ])];
-        if (this.preview.changes.length > 5) messages.push(muted(`change: … ${this.preview.changes.length - 5} more`));
         const messageText = new Text(messages.join("\n"), CONTENT_START_COLUMN, 0);
         const terminalRows = this.options.terminalRows?.();
         // Count the rendered header/status/table and messages; only the footer and bottom border remain.
