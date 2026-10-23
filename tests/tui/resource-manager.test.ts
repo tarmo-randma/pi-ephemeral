@@ -80,12 +80,12 @@ async function readState(path: string): Promise<ActivationState> {
   return JSON.parse(await readFile(path, "utf8")) as ActivationState;
 }
 
-async function addHeightFixtureResources(packageRoot: string): Promise<void> {
+async function addHeightFixtureResources(packageRoot: string, rootRows = false, count = 15): Promise<void> {
   const resourcesPath = join(packageRoot, "ephemeral", "resources.json");
   const catalog = JSON.parse(await readFile(resourcesPath, "utf8")) as { version: 1; resources: Array<{ type: "skill"; name: string; path: string; bundle: string; description: string }> };
-  const extraResources = Array.from({ length: 15 }, (_, index) => {
+  const extraResources = Array.from({ length: count }, (_, index) => {
     const name = `zzz-height-${String(index + 1).padStart(2, "0")}`;
-    return { type: "skill" as const, name, path: `ephemeral/skills/${name}`, bundle: "pi-web-access", description: "height fixture child" };
+    return { type: "skill" as const, name, path: `ephemeral/skills/${name}`, bundle: rootRows ? undefined : "pi-web-access", description: "height fixture child" };
   });
   for (const resource of extraResources) {
     await mkdir(join(packageRoot, resource.path), { recursive: true });
@@ -295,6 +295,7 @@ describe("resource manager component", () => {
     ]);
   });
 
+  // Contained resources stay read-only even though the idle pending-change message is gone.
   it("keeps contained rows read-only and bundle toggles atomic", async () => {
     const ctx = await context();
     await addAtomicPackage(ctx.packageRoot);
@@ -308,7 +309,7 @@ describe("resource manager component", () => {
     component.handleInput(" ");
 
     expect(notify).toHaveBeenCalledWith("skill:brainstorming is part of extension package example-native-package and is read-only; toggle the package extension instead.", "warning");
-    expect(component.render(100).join("\n")).toContain("No pending changes.");
+    expect((component as unknown as { pending: PendingResourceToggle[] }).pending).toEqual([]);
 
     component.handleInput("d");
     component.handleInput(" ");
@@ -318,13 +319,16 @@ describe("resource manager component", () => {
     expect(output).not.toContain("prompt:review");
   });
 
+  // Compact idle chrome must not change root/detail behavior or child alignment.
   it("defaults to root rows only and toggles detail mode with aligned hierarchy columns", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
 
     await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("pi-web-access"));
     const rootOutput = component.render(100).join("\n");
-    expect(rootOutput).toContain("Scope: project (fixed at launch) • Details: off • Search: (none)");
+    expect(rootOutput).toContain("Pi Ephemeral Resource Manager • Scope: project");
+    expect(rootOutput).not.toContain("Details: off");
+    expect(rootOutput).not.toContain("Search: (none)");
     expect(rootOutput).toContain("bundle");
     expect(rootOutput).toContain("grill-me");
     expect(rootOutput).not.toContain("Categories:");
@@ -341,7 +345,8 @@ describe("resource manager component", () => {
     expect(bundleLine.indexOf("pi-web-access")).toBe(childLine.indexOf("librarian"));
   });
 
-  it("aligns title, status, header, and table rows with SelectList gutter accounted for", async () => {
+  // The merged header keeps the table aligned with SelectList's selection gutter in root and search views.
+  it("aligns the merged title and table rows with SelectList gutter accounted for", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
 
@@ -349,8 +354,7 @@ describe("resource manager component", () => {
     let output = component.render(100).join("\n");
     const expectedStart = semanticTokenIndex(lineContaining(output, "Pi Ephemeral Resource Manager"), "Pi Ephemeral Resource Manager");
     expect(expectedStart).toBeGreaterThanOrEqual(0);
-    expect(semanticTokenIndex(lineContaining(output, "Scope: project"), "Scope: project")).toBe(expectedStart);
-    expect(semanticTokenIndex(lineContaining(output, "Use /pi-ephemeral --global"), "Managing")).toBe(expectedStart);
+    expect(lineContaining(output, "Scope: project")).toBe(lineContaining(output, "Pi Ephemeral Resource Manager"));
     let header = stripAnsi(lineContaining(output, "Pending"));
     expect(semanticTokenIndex(header, "Use")).toBe(expectedStart);
     expect(semanticTokenIndex(tableItemLine(output, "grill-me"), "skill")).toBe(semanticTokenIndex(header, "Type"));
@@ -369,7 +373,7 @@ describe("resource manager component", () => {
     for (const char of "librarian") component.handleInput(char);
     output = component.render(100).join("\n");
     expect(semanticTokenIndex(lineContaining(output, "Pi Ephemeral Resource Manager"), "Pi Ephemeral Resource Manager")).toBe(expectedStart);
-    expect(semanticTokenIndex(lineContaining(output, "Scope: project"), "Scope: project")).toBe(expectedStart);
+    expect(lineContaining(output, "Scope: project")).toBe(lineContaining(output, "Pi Ephemeral Resource Manager"));
     header = stripAnsi(lineContaining(output, "Pending"));
     childLine = tableItemLine(output, "librarian");
     expect(semanticTokenIndex(header, "Use")).toBe(expectedStart);
@@ -466,6 +470,7 @@ describe("resource manager component", () => {
     });
   });
 
+  // A globally inherited bundle cannot acquire staged project choices.
   it("blank-action bundle notifies and creates no pending changes", async () => {
     const ctx = await context();
     await applyPlan(await planEnable({ ...ctx, scope: "global", type: "extension", name: "pi-web-access" }));
@@ -480,9 +485,10 @@ describe("resource manager component", () => {
     component.handleInput(" ");
 
     expect(notify).toHaveBeenCalledWith("No editable resources in bundle pi-web-access for project scope", "warning");
-    expect(component.render(100).join("\n")).toContain("No pending changes.");
+    expect((component as unknown as { pending: PendingResourceToggle[] }).pending).toEqual([]);
   });
 
+  // Mixed-scope warnings remain visible after removing the generic always-on notice.
   it("renders mixed-scope warnings in default and detail modes", async () => {
     const ctx = await context();
     await applyPlan(await planEnable({ ...ctx, scope: "global", type: "extension", name: "pi-web-access" }));
@@ -533,7 +539,8 @@ describe("resource manager component", () => {
     expect(output).not.toContain("No matching commands");
   });
 
-  it("keeps project TUI scope fixed and applies toggles only to project state", async () => {
+  // Project remains the default write target unless the user explicitly changes scope.
+  it("starts in project scope and applies toggles only to project state", async () => {
     const ctx = await context();
     const done = vi.fn();
     const notify = vi.fn();
@@ -541,14 +548,14 @@ describe("resource manager component", () => {
 
     await waitForExpectation(() => {
       const output = component.render(100).join("\n");
-      expect(output).toContain("Scope: project (fixed at launch)");
+      expect(output).toContain("Scope: project");
       expect(output).toContain("Use");
       expect(output).toContain("Type");
       expect(output).toContain("Name");
       expect(output).toContain("Action");
       expect(output).toContain("grill-me");
     });
-    expect(component.render(100).join("\n")).toContain("Use /pi-ephemeral --global to manage global scope.");
+    expect(component.render(100).join("\n")).toContain("g global");
 
     component.handleInput("j");
     component.handleInput("j");
@@ -701,6 +708,7 @@ describe("resource manager component", () => {
     expect(done).toHaveBeenCalledWith("cancelled");
   });
 
+  // An empty search removes its footer indicator and restores navigation.
   it("exits empty search after Backspace so navigation resumes", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
@@ -711,7 +719,7 @@ describe("resource manager component", () => {
     component.handleInput("\x7f");
 
     const afterBackspace = component.render(100).join("\n");
-    expect(afterBackspace).toContain("Search: (none)");
+    expect(afterBackspace).not.toContain("Search:");
     expect(afterBackspace).not.toContain("Search: /");
 
     component.handleInput("j");
@@ -722,6 +730,7 @@ describe("resource manager component", () => {
     expect(component.render(100).join("\n")).toContain("enable");
   });
 
+  // Kitty Backspace clears the search indicator just like a normal Backspace.
   it("exits empty search after Kitty CSI-u Backspace so navigation resumes", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
@@ -732,7 +741,7 @@ describe("resource manager component", () => {
     component.handleInput("\x1b[127u");
 
     const afterBackspace = component.render(100).join("\n");
-    expect(afterBackspace).toContain("Search: (none)");
+    expect(afterBackspace).not.toContain("Search:");
     expect(afterBackspace).not.toContain("Search: /");
 
     component.handleInput("j");
@@ -793,30 +802,132 @@ describe("resource manager component", () => {
     for (const scope of ["global", "project"] as const) {
       const component = new ResourceManagerComponent({ ...ctx, initialScope: scope, done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
       const target = scope === "global" ? globalStatePath(ctx.agentDir) : ctx.projectRoot;
-      expect(component.render(500).join("\n")).toContain(`Target: ${target}`);
+      expect(component.render(500).join("\n")).toContain(`Pi Ephemeral Resource Manager • Scope: ${scope} ${target}`);
     }
   });
 
-  // A tiny terminal must still offer cancellation and never overflow pi-tui's width contract.
-  it("fits a resized standalone viewport", async () => {
+  // A short pane should spend its space on resources, with one counter and a stable footer on resize.
+  it("uses the real height for compact normal and narrow viewports", async () => {
     const ctx = await context();
-    let rows = 24;
+    await addHeightFixtureResources(ctx.packageRoot, true, 30);
+    let rows = 10;
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings(), terminalRows: () => rows });
-    await waitForExpectation(() => expect(component.render(80).join("\n")).toContain("grill-me"));
-    rows = 12;
-    const lines = component.render(40);
-    expect(lines.length).toBeLessThanOrEqual(rows);
-    expect(lines.every((line) => stripAnsi(line).length <= 40)).toBe(true);
-    expect(lines.join("\n")).toContain("Esc cancel");
+    await waitForExpectation(() => expect(component.render(160).join("\n")).toContain("grill-me"));
+    const resourceLines = (lines: string[]) => lines.map(stripAnsi).filter((line) => /(?:^|\s)(?:bundle|skill)\s/.test(line));
+    for (const width of [160, 40]) {
+      const lines = component.render(width);
+      const output = stripAnsi(lines.join("\n"));
+      expect(lines).toHaveLength(10);
+      expect(resourceLines(lines)).toHaveLength(5);
+      expect(lines.every((line) => stripAnsi(line).length <= width)).toBe(true);
+      expect(output).toContain("Scope: project");
+      expect(output).not.toContain("Always-on resources are read-only metadata");
+      expect(output).not.toContain("No pending changes.");
+      expect(output).not.toContain("Search:");
+      expect(output.match(/\(1\/33\)/g)).toHaveLength(1);
+      expect(stripAnsi(lines.at(-2) ?? "")).toContain("(1/33) • g global");
+      expect(output).toContain("Esc cancel");
+    }
+    for (let index = 0; index < 32; index++) component.handleInput("j");
+    let lines = component.render(160);
+    expect(resourceLines(lines)).toHaveLength(5);
+    expect(stripAnsi(lines.join("\n"))).toMatch(/→\s+skill\s+zzz-height-30/);
+    expect(stripAnsi(lines.at(-2) ?? "")).toContain("(33/33)");
+    rows = 30;
+    lines = component.render(160);
+    expect(lines).toHaveLength(30);
+    expect(resourceLines(lines)).toHaveLength(25);
+    rows = 10;
+    expect(resourceLines(component.render(160))).toHaveLength(5);
   });
 
+  // Removing the generic read-only notice must not hide a real catalogue problem in a short pane.
+  it("keeps actual catalogue errors visible in a compact viewport", async () => {
+    const ctx = await context();
+    await writeFile(join(ctx.packageRoot, "ephemeral", "resources.json"), JSON.stringify({ version: 1, resources: [
+      { type: "skill", name: "missing", path: "ephemeral/skills/missing" },
+    ] }));
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings(), terminalRows: () => 10 });
+    await waitForExpectation(() => {
+      const lines = component.render(160);
+      expect(lines.join("\n")).toContain("error: Resource source does not exist: ephemeral/skills/missing");
+      expect(lines.join("\n")).not.toContain("Always-on resources are read-only metadata");
+      expect(lines.length).toBeLessThanOrEqual(10);
+    });
+  });
+
+  // Scope switching is a view-only action; inherited resources become editable only in global scope.
+  it("switches scope safely, keeps g as search text, and refuses pending choices until undone", async () => {
+    const ctx = await context();
+    await applyPlan(await planEnable({ ...ctx, scope: "global", type: "skill", name: "grill-me" }));
+    const savedGlobal = await readFile(globalStatePath(ctx.agentDir), "utf8");
+    const notify = vi.fn();
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify, requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
+    await waitForExpectation(() => expect(component.render(500).join("\n")).toContain("grill-me"));
+    component.handleInput("/");
+    component.handleInput("\x1b[103u");
+    for (const char of "rill-me") component.handleInput(char);
+    let output = component.render(500).join("\n");
+    expect(output).toContain("Search: /grill-me");
+    expect(output).toContain(`Scope: project ${ctx.projectRoot}`);
+    expect(tableItemLine(output, "grill-me").trimEnd()).toMatch(/grill-me$/);
+    component.handleInput("\r");
+    component.handleInput("\x1b[103u");
+    output = component.render(500).join("\n");
+    expect(output).toContain(`Scope: global ${globalStatePath(ctx.agentDir)}`);
+    expect(output).toContain("g project");
+    expect(tableItemLine(output, "grill-me")).toContain("disable");
+    component.handleInput(" ");
+    await waitForExpectation(() => expect(component.render(500).join("\n")).toContain("change:"));
+    component.handleInput("g");
+    output = component.render(500).join("\n");
+    expect(output).toContain("Scope: global");
+    expect(output).toContain("Save or undo pending choices before switching scope.");
+    expect((component as unknown as { pending: PendingResourceToggle[] }).pending).toEqual([
+      { type: "skill", name: "grill-me", scope: "global", enabled: false },
+    ]);
+    component.handleInput(" ");
+    await waitForExpectation(() => {
+      const output = component.render(500).join("\n");
+      expect(output).not.toContain("Loading resources");
+      expect(output).not.toContain("change:");
+    });
+    component.handleInput("g");
+    output = component.render(500).join("\n");
+    expect(output).toContain("Scope: project");
+    expect(output).toContain("g global");
+    expect(tableItemLine(output, "grill-me").trimEnd()).toMatch(/grill-me$/);
+    expect(await readFile(globalStatePath(ctx.agentDir), "utf8")).toBe(savedGlobal);
+    await expect(readFile(projectStatePath(ctx.projectRoot))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // A switched menu must write to the newly selected scope through the existing planner and writer.
+  it("saves choices to global after switching from the default project scope", async () => {
+    const ctx = await context();
+    const done = vi.fn();
+    const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done, notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("grill-me"));
+    component.handleInput("g");
+    component.handleInput("j");
+    component.handleInput("j");
+    component.handleInput(" ");
+    await waitForExpectation(() => expect(component.render(100).join("\n")).toContain("change:"));
+    component.handleInput("\r");
+    await waitForExpectation(() => expect(done).toHaveBeenCalledWith("applied"));
+    expect((await readState(globalStatePath(ctx.agentDir))).activations).toEqual([
+      { type: "skill", name: "grill-me", target: "skills/grill-me" },
+    ]);
+    await expect(readFile(projectStatePath(ctx.projectRoot))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // Details are advertised only when enabled, while d still reveals children.
   it("toggles detail mode with d instead of category tabs", async () => {
     const ctx = await context();
     const component = new ResourceManagerComponent({ ...ctx, initialScope: "project", done: vi.fn(), notify: vi.fn(), requestRender: vi.fn(), theme: testTheme(), keybindings: getKeybindings() });
 
     await waitForExpectation(() => {
       const output = component.render(100).join("\n");
-      expect(output).toContain("Details: off");
+      expect(output).not.toContain("Details: on");
       expect(output).not.toContain("Categories:");
     });
     component.handleInput("d");

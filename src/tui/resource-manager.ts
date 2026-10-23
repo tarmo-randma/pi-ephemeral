@@ -265,7 +265,6 @@ interface ResourceManagerComponentOptions extends PlannerContext {
   requestRender: () => void;
   theme: Pick<Theme, "fg" | "bold">;
   selectListTheme?: SelectListTheme;
-  scopeHelp?: string;
   terminalRows?: () => number;
   keybindings: KeybindingsManager;
 }
@@ -328,11 +327,13 @@ export class ResourceManagerComponent implements Component {
     const warning = (text: string) => this.options.theme.fg("warning", text);
     const danger = (text: string) => this.options.theme.fg("error", text);
     this.container.addChild(new DynamicBorder((s: string) => accent(s)));
-    this.container.addChild(new Text(accent(this.options.theme.bold("Pi Ephemeral Resource Manager")), CONTENT_START_COLUMN, 0));
-    this.container.addChild(new Text(muted(`Scope: ${this.scope} (fixed at launch) • Details: ${this.details ? "on" : "off"} • Search: ${this.searchMode ? "/" : ""}${this.search || "(none)"}`), CONTENT_START_COLUMN, 0));
     const target = this.scope === "global" ? globalStatePath(this.options.agentDir) : this.options.projectRoot;
-    this.container.addChild(new TruncatedText(muted(`Target: ${target}`), CONTENT_START_COLUMN, 0));
-    this.container.addChild(new TruncatedText(muted(this.options.scopeHelp ?? `Managing ${this.scope} resources. Use /pi-ephemeral --global to manage global scope.`), CONTENT_START_COLUMN, 0));
+    const scopeLabel = `Scope: ${this.scope}`;
+    const headerWidth = Math.max(1, width - CONTENT_START_COLUMN * 2);
+    // Keep scope readable before spending the remaining header space on the title and target path.
+    const titleWidth = Math.max(0, headerWidth - scopeLabel.length - 6 - Math.min(24, Math.floor(headerWidth / 3)));
+    const title = truncateToWidth("Pi Ephemeral Resource Manager", titleWidth);
+    this.container.addChild(new TruncatedText(accent(this.options.theme.bold(`${title ? `${title} • ` : ""}${scopeLabel} ${target}`)), CONTENT_START_COLUMN, 0));
     if (this.status) this.container.addChild(new Text(this.status, CONTENT_START_COLUMN, 0));
 
     if (this.loading) this.container.addChild(new Text("Loading resources…", CONTENT_START_COLUMN, 0));
@@ -341,16 +342,27 @@ export class ResourceManagerComponent implements Component {
       const vm = this.viewModel();
       if (vm) {
         const rowWidths = tuiRowWidths(width);
-        this.container.addChild(new Text(tableRow(["Use", "Type", "Name", "Action", "Pending"], rowWidths), CONTENT_START_COLUMN, 0));
+        this.container.addChild(new TruncatedText(tableRow(["Use", "Type", "Name", "Action", "Pending"], rowWidths), CONTENT_START_COLUMN, 0));
         const items: SelectItem[] = vm.rows.map((row) => {
           const label = tableRow([row.use, `${row.depth === 1 ? "  " : ""}${row.type}`, row.name, row.action, row.pending ? (row.pendingEnabled ? "enable" : "disable") : ""], rowWidths);
           return { value: row.identity, label: row.muted ? muted(label) : label };
         });
-        const defaultVisibleRows = this.details ? 28 : 20;
-        const maxVisibleRows = this.options.terminalRows
-          ? Math.max(1, Math.min(defaultVisibleRows, this.options.terminalRows() - 14))
-          : defaultVisibleRows;
-        const list = new SelectList(items, Math.min(Math.max(items.length, 1), maxVisibleRows), this.options.selectListTheme ?? getSelectListTheme());
+        const messages = [...new Set([
+          ...vm.rows.flatMap((row) => row.warnings.map((message) => warning(`warning: ${message}`))),
+          ...vm.warnings.filter((item) => item.code !== "read_only_catalog").map((item) => warning(`warning: ${item.message}`)),
+          ...vm.errors.map((item) => danger(`error: ${item.message}`)),
+          ...this.preview.warnings.filter((item) => item.code !== "read_only_catalog").map((item) => warning(`plan warning: ${item.message}`)),
+          ...this.preview.errors.map((item) => danger(`plan error: ${item.message}`)),
+          ...this.preview.changes.slice(0, 5).map((change) => muted(`change: ${change.message}`)),
+        ])];
+        if (this.preview.changes.length > 5) messages.push(muted(`change: … ${this.preview.changes.length - 5} more`));
+        const messageText = new Text(messages.join("\n"), CONTENT_START_COLUMN, 0);
+        const terminalRows = this.options.terminalRows?.();
+        // Count the rendered header/status/table and messages; only the footer and bottom border remain.
+        const maxVisibleRows = terminalRows === undefined ? (this.details ? 28 : 20)
+          : Math.max(1, terminalRows - this.container.render(width).length - messageText.render(width).length - 2);
+        const visibleRows = Math.min(Math.max(items.length, 1), maxVisibleRows);
+        const list = new SelectList(items, visibleRows, this.options.selectListTheme ?? getSelectListTheme());
         if (items.length > 0) {
           if (this.selectedIdentity) {
             const index = items.findIndex((item) => item.value === this.selectedIdentity);
@@ -364,20 +376,19 @@ export class ResourceManagerComponent implements Component {
         list.onSelectionChange = (item) => { this.selectedIdentity = item.value; this.selectedIndex = Math.max(0, items.findIndex((candidate) => candidate.value === item.value)); };
         list.onSelect = (item) => { this.selectedIdentity = item.value; void this.toggleSelected(); };
         list.onCancel = () => this.options.done(this.saveFailed ? "failed" : "cancelled");
-        this.container.addChild(list);
-        const messages = [
-          ...vm.rows.flatMap((row) => row.warnings.map((message) => warning(`warning: ${message}`))),
-          ...vm.warnings.map((item) => warning(`warning: ${item.message}`)),
-          ...this.preview.warnings.map((item) => warning(`plan warning: ${item.message}`)),
-          ...this.preview.errors.map((item) => danger(`plan error: ${item.message}`)),
-          ...this.preview.changes.slice(0, 5).map((change) => muted(`change: ${change.message}`)),
-        ];
-        if (this.preview.changes.length > 5) messages.push(muted(`change: … ${this.preview.changes.length - 5} more`));
-        if (this.preview.changes.length === 0 && this.preview.errors.length === 0) messages.push(muted("No pending changes."));
-        this.container.addChild(new Text(messages.join("\n"), CONTENT_START_COLUMN, 0));
+        // SelectList has no hide-counter option. Its public render returns item rows followed by scroll info;
+        // keep just the item viewport and put our counter in the shared help footer instead.
+        this.container.addChild({ render: (listWidth) => list.render(listWidth).slice(0, visibleRows), invalidate: () => list.invalidate() });
+        this.container.addChild(messageText);
       }
     }
-    this.container.addChild(new Text(muted("/ search • d details • Space toggle • Enter save • Esc cancel"), CONTENT_START_COLUMN, 0));
+    const count = this.viewModel()?.rows.length ?? 0;
+    const counter = `(${count ? this.selectedIndex + 1 : 0}/${count})`;
+    const searchStatus = this.searchMode || this.search ? ` • Search: ${this.searchMode ? "/" : ""}${this.search}` : "";
+    const detailsStatus = this.details ? " • Details: on" : "";
+    const scopeAction = `g ${this.scope === "project" ? "global" : "project"}`;
+    const help = width < 80 ? "Esc cancel • / search • d details • Space • Enter save" : "/ search • d details • Space toggle • Enter save • Esc cancel";
+    this.container.addChild(new TruncatedText(muted(`${counter} • ${scopeAction}${searchStatus}${detailsStatus} • ${help}`), CONTENT_START_COLUMN, 0));
     this.container.addChild(new DynamicBorder((s: string) => accent(s)));
     const lines = this.container.render(width).map((line) => truncateToWidth(line, width));
     const rows = this.options.terminalRows?.();
@@ -421,7 +432,7 @@ export class ResourceManagerComponent implements Component {
         return;
       }
       const childKeys = new Set(childToggles.map((toggle) => pendingKey(toggle)));
-      this.pending = [...this.pending.filter((toggle) => !childKeys.has(pendingKey(toggle))), ...childToggles];
+      this.pending = this.withoutUnchangedToggles([...this.pending.filter((toggle) => !childKeys.has(pendingKey(toggle))), ...childToggles]);
       await this.refresh();
       return;
     }
@@ -430,8 +441,26 @@ export class ResourceManagerComponent implements Component {
       return;
     }
     const nextEnabled = !(row.pending ? row.pendingEnabled : this.scope === "global" ? row.globalActive : row.projectActive);
-    this.pending = [...this.pending.filter((toggle) => pendingKey(toggle) !== `${this.scope}:${row.identity}`), { type: row.type as ResourceType, name: row.name, scope: this.scope, enabled: nextEnabled }];
+    this.pending = this.withoutUnchangedToggles([...this.pending.filter((toggle) => pendingKey(toggle) !== `${this.scope}:${row.identity}`), { type: row.type as ResourceType, name: row.name, scope: this.scope, enabled: nextEnabled }]);
     await this.refresh();
+  }
+
+  // Toggling back to the saved choice is an undo, so it must not block a later scope switch.
+  private withoutUnchangedToggles(toggles: PendingResourceToggle[]): PendingResourceToggle[] {
+    return toggles.filter((toggle) => {
+      const state = toggle.scope === "global" ? this.globalState : this.projectState;
+      return toggle.enabled !== Boolean(state?.activations.some((activation) => activationIdentity(activation) === identity(toggle.type, toggle.name)));
+    });
+  }
+
+  // Scope changes only the view and future choices, never an existing staged choice or saved state.
+  private switchScope(): void {
+    if (this.pending.length > 0) {
+      this.notify("Save or undo pending choices before switching scope.", "warning");
+      return;
+    }
+    this.scope = this.scope === "project" ? "global" : "project";
+    this.status = undefined;
   }
 
   // Save through the same sequential writer in both hosts; a failed save never signals completion.
@@ -506,6 +535,7 @@ export class ResourceManagerComponent implements Component {
     }
 
     if (matchesKey(data, Key.slash)) this.searchMode = true;
+    else if (this.printableInput(data) === "g" && !this.loading && !this.error) this.switchScope();
     else if (data === "d") {
       this.details = !this.details;
       this.selectedIdentity = undefined;

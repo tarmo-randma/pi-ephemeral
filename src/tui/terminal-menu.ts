@@ -32,7 +32,6 @@ export async function launchTerminalMenu(options: LaunchResourceManagerTuiOption
     selectListTheme,
     keybindings: getKeybindings(),
     terminalRows: () => terminal.rows,
-    scopeHelp: "Scope fixed at launch. For global choices: pi-ephemeral menu --global",
   });
   tui.addChild(component);
   tui.setFocus(component);

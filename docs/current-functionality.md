@@ -65,10 +65,11 @@ Bundle behavior:
 pi-ephemeral menu [--global|--project] [--package <dir>] [--agent-dir <dir>] [--cwd <dir>]
 ```
 
-Opens the existing manager in an ordinary interactive terminal. Scope is fixed at launch, project by default;
-use `--global` explicitly for host-wide choices. The resolved target is displayed. Space stages a toggle,
-Enter saves, and Escape/Ctrl+C cancels. It uses the same catalogue, bundles, search and sequential writer as
-the Pi menu, not a second activation backend. Write errors remain visible and can represent partial saves.
+Opens the existing manager in an ordinary interactive terminal. Scope starts as project by default;
+use `--global` to start with host-wide choices. The header shows scope and its resolved target. `g` switches
+between project and global without writing anything, but only with no pending choices: save or undo them
+first. Space stages a toggle (toggle back to undo), Enter saves, and Escape/Ctrl+C cancels. It uses the same
+catalogue, bundles, search and sequential writer as the Pi menu, not a second activation backend. Write errors remain visible and can represent partial saves.
 Closing after a failed save returns failure (`1`), not ordinary cancellation, and preserves the partial-save
 warning. A successful retry completes normally and allows the intended conversation to reload.
 
@@ -145,7 +146,9 @@ Successful `/pi-ephemeral enable` and `/pi-ephemeral disable` slash commands aut
 
 TUI behavior:
 
-- Shows a bundle-aware resource table.
+- Shows a bundle-aware resource table with a single-line scope/target header and row counter in the help footer.
+- Standalone menus use the available terminal height and recalculate their list viewport on resize.
+- `g` switches project/global scope when nothing is staged; in search-entry mode it remains ordinary text.
 - Default mode shows root rows only.
 - Detail mode (`d`) reveals child resources.
 - Detail mode shows statically discoverable resources contained by an atomic native package as muted in-table rows beneath the package bundle. Their `Use` and `Action` cells are blank and the rows are read-only; toggling remains on the owning package bundle or extension.
