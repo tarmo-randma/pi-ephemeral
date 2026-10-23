@@ -8,7 +8,9 @@ const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 async function fixture() {
-  const root = await mkdtemp(join(homedir(), ".cache", "pi-input-refresh-test-"));
+  const cache = join(homedir(), ".cache");
+  await mkdir(cache, { recursive: true });
+  const root = await mkdtemp(join(cache, "pi-input-refresh-test-"));
   roots.push(root);
   const agent = join(root, "agent");
   const project = join(root, "project");
