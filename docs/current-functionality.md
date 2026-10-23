@@ -68,8 +68,10 @@ pi-ephemeral menu [--global|--project] [--package <dir>] [--agent-dir <dir>] [--
 Opens the existing manager in an ordinary interactive terminal. Scope starts as project by default;
 use `--global` to start with host-wide choices. The header shows scope and its resolved target. `g` switches
 between project and global without writing anything, but only with no pending choices: save or undo them
-first. Space stages a toggle (toggle back to undo), Enter saves, and Escape/Ctrl+C cancels. It uses the same
-catalogue, bundles, search and sequential writer as the Pi menu, not a second activation backend. Write errors remain visible and can represent partial saves.
+first. Space stages a toggle, Enter saves, and Escape/Ctrl+C cancels. Individual-resource toggles can be undone
+by toggling back; partially enabled bundles may need affected child toggles in details view (`d`) to undo.
+It uses the same catalogue, bundles, search and sequential writer as the Pi menu, not a second activation
+backend. Write errors remain visible and can represent partial saves.
 Closing after a failed save returns failure (`1`), not ordinary cancellation, and preserves the partial-save
 warning. A successful retry completes normally and allows the intended conversation to reload.
 
