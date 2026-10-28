@@ -186,7 +186,7 @@ describe("extension slash command", () => {
     await expect(handleSlashCommand("reload", {
       cwd: fx.projectRoot, mode: "rpc", ui: { notify }, waitForIdle: vi.fn(),
       reload: async () => { invalid = true; throw new Error("reload broke"); },
-    } as never, fx)).rejects.toThrow("resource reload failed: reload broke");
+    } as never, fx)).rejects.toThrow("Current-session resource reload failed: reload broke");
     expect(notify).toHaveBeenCalledOnce();
   });
 

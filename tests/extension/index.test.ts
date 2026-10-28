@@ -57,7 +57,7 @@ describe("extension default export wiring", () => {
     try {
       const result = handler(`${action} skill brainstorming --global --json`, context as never);
       if (failReload) {
-        await expect(result).rejects.toThrow("Activation saved on disk, but current-session resource reload failed: reload unavailable");
+        await expect(result).rejects.toThrow("Activation saved on disk. Current-session resource reload failed: reload unavailable");
       } else {
         await expect(result).resolves.toBeUndefined();
       }
@@ -72,14 +72,19 @@ describe("extension default export wiring", () => {
     }
   });
 
-  it("registers the slash command and resources_discover handler and delegates both", async () => {
+  // Discovery may prune orphaned choices; snapshot after repair so the next input does not reload again.
+  it("registers commands and remembers the discovery baseline after activation repair", async () => {
     const fx = await fixture();
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = fx.agentDir;
+    await writeFile(join(fx.agentDir, "pi-ephemeral-global.json"), JSON.stringify({
+      version: 1, activations: [{ type: "skill", name: "removed", target: "skills/removed" }],
+    }));
     const notify = vi.fn();
     const registeredCommands: Record<string, { handler: (args: string, ctx: never) => Promise<void> }> = {};
     const handlers: Record<string, (event: never, ctx: never) => Promise<unknown>> = {};
     const pi = {
+      sendUserMessage: vi.fn(),
       getCommands: vi.fn(() => [{ name: "pi-ephemeral", source: "extension", sourceInfo: { baseDir: fx.packageRoot } }]),
       registerCommand: vi.fn((name: string, command: { handler: (args: string, ctx: never) => Promise<void> }) => {
         registeredCommands[name] = command;
@@ -97,6 +102,11 @@ describe("extension default export wiring", () => {
       await expect(registeredCommands["pi-ephemeral"]!.handler("status", { cwd: fx.projectRoot, mode: "print", ui: { notify } } as never)).resolves.toBeUndefined();
       expect(notify).toHaveBeenCalledWith(expect.stringContaining("Status:"), "info");
       await expect(handlers.resources_discover!({ cwd: fx.projectRoot, reason: "startup" } as never, { cwd: fx.projectRoot, ui: { notify } } as never)).resolves.toBeUndefined();
+      await expect(handlers.input!({ text: "Next input", source: "rpc" } as never, {
+        cwd: fx.projectRoot, isIdle: () => true, model: { id: "fixture" },
+        modelRegistry: { hasConfiguredAuth: () => true },
+      } as never)).resolves.toBeUndefined();
+      expect(pi.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
       else process.env.PI_CODING_AGENT_DIR = previousAgentDir;

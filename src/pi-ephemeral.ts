@@ -9,25 +9,17 @@ export default function piEphemeral(pi: ExtensionAPI): void {
   pi.registerCommand("pi-ephemeral", {
     description: "Manage optional Pi resources",
     handler: async (args, ctx) => {
-      const completeReload = args.trim() === "reload" ? inputRefresh.takeReloadCompletion() : undefined;
-      try {
-        const packageRoot = discoverHostPackageRoot(pi);
-        const output = await handleSlashCommand(args, ctx, { packageRoot });
-        completeReload?.();
-        // Reloading commands return no output: their old context is now stale.
-        if (output) ctx.ui.notify(output.trim(), "info");
-      } catch (error) {
-        // Reject the waiting input too; never leave an ordinary RPC prompt waiting on a success-only gate.
-        if (completeReload) completeReload(error);
-        else throw error;
-      }
+      const packageRoot = discoverHostPackageRoot(pi);
+      const output = await handleSlashCommand(args, ctx, { packageRoot });
+      // Reloading commands return no output: their old context is now stale.
+      if (output) ctx.ui.notify(output.trim(), "info");
     },
   });
 
   pi.on("resources_discover", async (event, ctx) => {
     const packageRoot = discoverHostPackageRoot(pi);
     const resources = await refreshOnResourcesDiscover(event, ctx, { packageRoot });
-    await inputRefresh.rememberLoadedChoices(event.cwd || ctx.cwd);
+    await inputRefresh.rememberBaseline(event.cwd || ctx.cwd);
     return resources;
   });
 }

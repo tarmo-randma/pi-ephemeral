@@ -1,6 +1,6 @@
 {
   "name": "@tarmo-randma/pi-ephemeral",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Make Pi resources optional and context-activated",
   "license": "MIT",
   "type": "module",
@@ -47,10 +47,12 @@
     "pack:check": "npm pack --dry-run",
     "test:package": "vitest run tests/package/installed-package.test.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@tarmo-randma/t3-pi-refresh": "git+ssh://git@github.com/tarmo-randma/t3-pi-refresh.git#cdcbf02475fa88e7eac9d79a0305c0008ae13253"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-coding-agent": ">=1.3.0",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },

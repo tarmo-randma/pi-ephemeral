@@ -29,6 +29,8 @@ The example package contains one optional skill, `ephemeral-example`, so you can
 
 A Pi package can load `pi-ephemeral` as its always-on extension and list optional resources in `ephemeral/resources.json`. Those resources are not loaded until you enable them with `/pi-ephemeral`.
 
+Reload and next-input replay use the imported `@tarmo-randma/t3-pi-refresh` library, installed as a normal dependency—not another loaded Pi extension. `pi-ephemeral` works on its own; it does not require `t3-topics` or an MCP configuration reader.
+
 Typical flow:
 
 1. Create or adapt a local Pi package.

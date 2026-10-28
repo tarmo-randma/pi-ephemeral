@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { reloadCurrentSession } from "@tarmo-randma/t3-pi-refresh";
 import { runCli } from "../cli.js";
 import { ArgParseError, HELP_TEXT, parseArgs, type CliCommand } from "../cli/args.js";
 import { resolveProjectRoot } from "../core/project-index.js";
@@ -79,28 +80,26 @@ function isTuiLaunch(input: string, ctx: Pick<ExtensionCommandContext, "mode">):
   return undefined;
 }
 
-// Reload only this conversation; after reload its old extension context must not be used.
-async function reloadCurrentResources(ctx: ExtensionCommandContext, message = "Activation saved on disk."): Promise<void> {
+// Keep saved-activation context in errors; the shared helper owns the reload mechanics.
+async function reloadSavedActivation(ctx: ExtensionCommandContext, message = "Activation saved on disk."): Promise<void> {
   try {
-    await ctx.waitForIdle();
-    ctx.ui.notify(`${message} Reloading current session resources…`, "info");
-    await ctx.reload();
+    await reloadCurrentSession(ctx, message);
   } catch (error) {
-    throw new Error(`Activation saved on disk, but current-session resource reload failed: ${error instanceof Error ? error.message : String(error)}. Restart this Pi conversation.`, { cause: error });
+    throw new Error(`Activation saved on disk. ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
 }
 
 // Apply slash actions and reload the current session after successful activation changes.
 export async function handleSlashCommand(args: string, ctx: ExtensionCommandContext, runtime: ExtensionRuntimeContext): Promise<string | undefined> {
   if (args.trim() === "reload") {
-    await reloadCurrentResources(ctx, "Refreshing saved activations.");
+    await reloadCurrentSession(ctx, "Refreshing saved activations.");
     return undefined;
   }
   const tuiScope = isTuiLaunch(args, ctx);
   if (tuiScope) {
     const agentDir = runtime.agentDir ?? defaultAgentDir();
     const result = await launchResourceManagerTui(ctx, { packageRoot: runtime.packageRoot, agentDir, projectRoot: await resolveProjectRoot(ctx.cwd), scope: tuiScope });
-    if (result === "applied") await reloadCurrentResources(ctx);
+    if (result === "applied") await reloadSavedActivation(ctx);
     return undefined;
   }
 
@@ -120,7 +119,7 @@ export async function handleSlashCommand(args: string, ctx: ExtensionCommandCont
   const output = stdout.join("");
   if (reloadAfterActivation) {
     const activationOutput = command.json ? output : output.replace("Reload recommended: run /reload\n", "");
-    await reloadCurrentResources(ctx, `${activationOutput.trim()}\nActivation saved on disk.`);
+    await reloadSavedActivation(ctx, `${activationOutput.trim()}\nActivation saved on disk.`);
     return undefined;
   }
   return output.length > 0 ? output : SLASH_HELP_TEXT;

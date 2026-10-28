@@ -163,7 +163,11 @@ TUI behavior:
 
 This next-input workflow requires Pi 1.3 or newer public command-expansion APIs. Before a new ordinary
 idle user input, the extension compares normalized global/project activation choices
-with its discovery-boundary snapshot. Changed choices trigger the existing reload command, then replay the
+with its discovery-boundary snapshot, taken after activation repair. It imports the ordinary ESM library
+`@tarmo-randma/t3-pi-refresh` for input checks, reload mechanics and fresh-runtime replay. The library is a
+normal package dependency, not another loaded extension; `pi-ephemeral` needs neither `t3-topics` nor an
+MCP configuration reader. Its activation adapter retains project-root and agent-directory resolution.
+Changed choices trigger the library's internal `/pi-ephemeral-input-refresh` command, then replay the
 original text/images through the fresh runtime; the original input dispatch is handled exactly once.
 Busy steering is unchanged; changes are checked at the next new idle input. Registered extension commands
 already dispatch before input, while a newly enabled slash command can be discovered and replayed after
@@ -182,10 +186,10 @@ its original `rpc`/`interactive`; source-sensitive extensions can observe that d
 starts agent activity before the original RPC responds handled; a newly registered extension slash command
 does not require agent activity. Saved choices are recorded when refresh is attempted to avoid retry loops.
 
-A late Pi reload failure can leave the old runtime invalidated, as with manual reload. The completion gate
-rejects, reports that activation was saved but reload failed, and lets Pi settle the original input using
-its normal error handling. This exceptional already-broken session can produce stale-handler diagnostics;
-restart **that Pi conversation**. No rollback, timeout, synthetic lifecycle or process restart is performed.
+A late Pi reload failure can leave the old runtime invalidated, as with manual reload. The library consumes
+the original input without replay and reports a command error: the message was not run. Reopen **that Pi
+conversation** and send the message again. Explicit activation commands additionally report that activation
+was saved on disk. No rollback, timeout, synthetic lifecycle or process restart is performed.
 
 ## Host package integration
 

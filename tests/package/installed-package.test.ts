@@ -26,6 +26,7 @@ function expectCleanCatalogOutput(result: { stdout: string; stderr: string }, pa
 }
 
 describe("installed package shape", () => {
+  // A packed host must resolve the extension and its ordinary library dependency without another extension loaded.
   it("works from a packed dependency inside an example host package", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-ephemeral-installed-package-"));
 
@@ -71,6 +72,14 @@ describe("installed package shape", () => {
       expect(existsSync(join(installedDependencyRoot, "dist", "index.js"))).toBe(true);
       const installedDependencyPackage = JSON.parse(await readFile(join(installedDependencyRoot, "package.json"), "utf8"));
       expect(installedDependencyPackage.pi.extensions).toEqual(["./dist/pi-ephemeral.js"]);
+      const { stdout: loadedCommands } = await execFileAsync(process.execPath, ["--input-type=module", "-e", `
+        import { pathToFileURL } from "node:url";
+        const { default: extension } = await import(pathToFileURL(process.argv[1]).href);
+        const commands = [];
+        extension({ on() {}, registerCommand(name) { commands.push(name); } });
+        console.log(JSON.stringify(commands));
+      `, join(installedDependencyRoot, "dist", "pi-ephemeral.js")], { cwd: hostDir });
+      expect(JSON.parse(loadedCommands)).toEqual(["pi-ephemeral-input-refresh", "pi-ephemeral"]);
 
       const installedHostPackage = JSON.parse(await readFile(packageJsonPath, "utf8"));
       expect(installedHostPackage.pi.extensions).toEqual(["./node_modules/@tarmo-randma/pi-ephemeral/dist/pi-ephemeral.js"]);
